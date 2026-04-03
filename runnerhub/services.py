@@ -1,0 +1,126 @@
+import json
+import logging
+from statistics import mean
+
+from django.conf import settings
+from django.db import transaction
+from django.utils.dateparse import parse_datetime
+
+from .models import SensorReading
+
+logger = logging.getLogger(__name__)
+
+try:
+    import boto3
+except ImportError:  # pragma: no cover
+    boto3 = None
+
+
+def publish_or_process(batch_payload):
+    backend = settings.RUNNERHUB_QUEUE_BACKEND
+    if backend == "sqs":
+        _publish_to_sqs(batch_payload)
+        return {"mode": "queued"}
+
+    persist_batch(batch_payload)
+    return {"mode": "inline"}
+
+
+def _publish_to_sqs(batch_payload):
+    if not boto3:
+        raise RuntimeError("boto3 is required when RUNNERHUB_QUEUE_BACKEND=sqs")
+    if not settings.RUNNERHUB_SQS_QUEUE_URL:
+        raise RuntimeError("RUNNERHUB_SQS_QUEUE_URL is not configured")
+
+    client = boto3.client("sqs")
+    client.send_message(
+        QueueUrl=settings.RUNNERHUB_SQS_QUEUE_URL,
+        MessageBody=json.dumps(batch_payload),
+    )
+
+
+@transaction.atomic
+def persist_batch(batch_payload):
+    fog_node_id = batch_payload["fog_node_id"]
+    run_id = batch_payload["run_id"]
+    athlete_name = batch_payload.get("athlete_name", "Demo Runner")
+    city = batch_payload.get("city", "Dublin")
+    readings = []
+
+    for reading in batch_payload.get("readings", []):
+        recorded_at = parse_datetime(reading["recorded_at"])
+        if recorded_at is None:
+            raise ValueError(f"Invalid recorded_at value: {reading['recorded_at']}")
+
+        readings.append(
+            SensorReading(
+                fog_node_id=fog_node_id,
+                run_id=run_id,
+                athlete_name=athlete_name,
+                city=city,
+                sensor_type=reading["sensor_type"],
+                reading_value=reading["reading_value"],
+                unit=reading["unit"],
+                latitude=reading.get("latitude"),
+                longitude=reading.get("longitude"),
+                quality_score=reading.get("quality_score", 0),
+                risk_flag=reading.get("risk_flag", False),
+                recorded_at=recorded_at,
+            )
+        )
+
+    SensorReading.objects.bulk_create(readings)
+    logger.info("Persisted %s readings for run %s", len(readings), run_id)
+    return len(readings)
+
+
+def build_dashboard_summary():
+    readings = SensorReading.objects.all()[:500]
+    sensor_types = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
+    cards = []
+
+    for sensor_type, label in sensor_types.items():
+        typed = [reading for reading in readings if reading.sensor_type == sensor_type]
+        if not typed:
+            continue
+        latest = typed[0]
+        cards.append(
+            {
+                "key": sensor_type,
+                "label": label,
+                "latest_value": round(latest.reading_value, 2),
+                "unit": latest.unit,
+                "average_value": round(mean(item.reading_value for item in typed), 2),
+                "latest_timestamp": latest.recorded_at,
+                "risk_events": sum(1 for item in typed if item.risk_flag),
+            }
+        )
+
+    recent_runs = []
+    seen_runs = set()
+    for reading in readings:
+        if reading.run_id in seen_runs:
+            continue
+        seen_runs.add(reading.run_id)
+        run_readings = [item for item in readings if item.run_id == reading.run_id]
+        recent_runs.append(
+            {
+                "run_id": reading.run_id,
+                "athlete_name": reading.athlete_name,
+                "city": reading.city,
+                "fog_node_id": reading.fog_node_id,
+                "reading_count": len(run_readings),
+                "started_at": run_readings[-1].recorded_at,
+                "latest_at": run_readings[0].recorded_at,
+            }
+        )
+        if len(recent_runs) == 6:
+            break
+
+    return {
+        "total_readings": SensorReading.objects.count(),
+        "active_runs": len(seen_runs),
+        "risk_events": SensorReading.objects.filter(risk_flag=True).count(),
+        "cards": cards,
+        "recent_runs": recent_runs,
+    }

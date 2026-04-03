@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RunFog Dublin Dashboard</title>
+    <link rel="stylesheet" href="/static/runnerhub/dashboard.css">
+</head>
+<body>
+    <main class="page-shell">
+        <section class="hero">
+            <div>
+                <p class="eyebrow">Fog + Edge Runner Intelligence</p>
+                <h1>RunFog Dublin</h1>
+                <p class="hero-copy">
+                    A cloud-ready monitoring system for runners using Strava-style telemetry.
+                    Virtual fog nodes batch live run data and stream scalable payloads to the backend.
+                </p>
+            </div>
+            <div class="hero-panel">
+                <div class="metric">
+                    <span>Total readings</span>
+                    <strong>{{ total_readings }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Active runs</span>
+                    <strong>{{ active_runs }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Risk events</span>
+                    <strong>{{ risk_events }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Queue mode</span>
+                    <strong>{{ queue_backend }}</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid">
+            {% for card in cards %}
+            <article class="card">
+                <p class="card-label">{{ card.label }}</p>
+                <h2>{{ card.latest_value }} {{ card.unit }}</h2>
+                <p>Average: {{ card.average_value }} {{ card.unit }}</p>
+                <p>Risk flags: {{ card.risk_events }}</p>
+                <p>Last update: {{ card.latest_timestamp|date:"d M Y H:i:s" }}</p>
+            </article>
+            {% empty %}
+            <article class="card">
+                <p class="card-label">No data yet</p>
+                <h2>Run the fog simulator</h2>
+                <p>Use the management command to generate Dublin runner telemetry and feed the backend.</p>
+            </article>
+            {% endfor %}
+        </section>
+
+        <section class="runs">
+            <div class="section-header">
+                <h2>Recent Runs</h2>
+                <p>Fog nodes aggregate wearable and environmental data before it reaches the cloud.</p>
+            </div>
+            <div class="table-shell">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Run</th>
+                            <th>Athlete</th>
+                            <th>Fog node</th>
+                            <th>City</th>
+                            <th>Readings</th>
+                            <th>Window</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for run in recent_runs %}
+                        <tr>
+                            <td>{{ run.run_id }}</td>
+                            <td>{{ run.athlete_name }}</td>
+                            <td>{{ run.fog_node_id }}</td>
+                            <td>{{ run.city }}</td>
+                            <td>{{ run.reading_count }}</td>
+                            <td>{{ run.started_at|date:"H:i:s" }} - {{ run.latest_at|date:"H:i:s" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6">No runs ingested yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

@@ -1,0 +1,4 @@
+Django==6.0.3
+whitenoise==6.9.0
+boto3==1.38.0
+gunicorn==23.0.0
