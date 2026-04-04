@@ -1,23 +1,33 @@
 """
 Lambda Fog Injector for RunFog Dublin
 --------------------------------------
-This Lambda function acts as a cloud-side fog node.
-It generates sensor readings and posts them directly to the backend ingest endpoint.
+Acts as a cloud-side fog node. Generates sensor readings and pushes
+them directly to SQS. The SQS consumer Lambda then picks them up
+and persists them via the EB backend.
 
-Trigger: Amazon EventBridge (scheduled rule) — e.g. every 2 minutes
-This means data flows into the dashboard even when Cloud9 is not running.
+This approach works within AWS Academy LabRole permissions because
+Lambda already has SQS access — the EB EC2 instance role does not.
+
+Architecture:
+  EventBridge (every 2 min)
+    → this function
+    → SQS (runfog-batches)
+    → lambda_consumer
+    → POST /api/internal/process/
+    → Django persists to SQLite
+    → Dashboard
 
 Environment variables:
-  RUNNERHUB_INGEST_URL          - https://<eb-domain>/api/ingest/
-  RUNNERHUB_BACKEND_INGEST_TOKEN - shared secret
-
-To set up the EventBridge trigger:
-  1. AWS Console → EventBridge → Rules → Create rule
-  2. Name: runfog-fog-injector-schedule
-  3. Rule type: Schedule
-  4. Schedule: rate(2 minutes)   ← adjust as needed for your demo
-  5. Target: Lambda → runfog-fog-injector
-  6. Save
+  RUNNERHUB_SQS_QUEUE_URL        - https://sqs.us-east-1.amazonaws.com/<account>/runfog-batches
+  FOG_READINGS_PER_BATCH         - default 20
+  FOG_NODE_ID                    - default fog-lambda-cloud
+  FOG_ATHLETE_NAME               - default Ciarán Kelly
+  FOG_CITY                       - default Dublin
+  FREQ_HEART_RATE                - default 1.0
+  FREQ_CADENCE                   - default 1.0
+  FREQ_PACE                      - default 0.7
+  FREQ_GPS                       - default 0.5
+  FREQ_AIR_QUALITY               - default 0.4
 """
 
 import json
@@ -25,23 +35,20 @@ import logging
 import math
 import os
 import random
+import boto3
 from datetime import datetime, timezone, timedelta
-from urllib import request, error
 from uuid import uuid4
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-INGEST_URL = os.environ["RUNNERHUB_INGEST_URL"]
-TOKEN = os.environ["RUNNERHUB_BACKEND_INGEST_TOKEN"]
+SQS_QUEUE_URL = os.environ["RUNNERHUB_SQS_QUEUE_URL"]
 
-# Configurable via environment variables — demonstrates configurable dispatch rates
 READINGS_PER_BATCH = int(os.environ.get("FOG_READINGS_PER_BATCH", "20"))
 FOG_NODE_ID = os.environ.get("FOG_NODE_ID", "fog-lambda-cloud")
 ATHLETE_NAME = os.environ.get("FOG_ATHLETE_NAME", "Ciarán Kelly")
 CITY = os.environ.get("FOG_CITY", "Dublin")
 
-# Sensor frequency weights — higher = more readings of that type per batch
 SENSOR_FREQUENCIES = {
     "heart_rate":  float(os.environ.get("FREQ_HEART_RATE", "1.0")),
     "cadence":     float(os.environ.get("FREQ_CADENCE", "1.0")),
@@ -52,6 +59,8 @@ SENSOR_FREQUENCIES = {
 
 BASE_LAT = 53.3498
 BASE_LNG = -6.2603
+
+sqs = boto3.client("sqs", region_name="us-east-1")
 
 
 def lambda_handler(event, context):
@@ -75,36 +84,22 @@ def lambda_handler(event, context):
         "readings": readings,
     }
 
-    logger.info("Dispatching %d readings for run %s to %s", len(readings), run_id, INGEST_URL)
+    logger.info("Sending %d readings for run %s to SQS", len(readings), run_id)
 
-    try:
-        req = request.Request(
-            INGEST_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {TOKEN}",
-            },
-            method="POST",
-        )
-        with request.urlopen(req, timeout=15) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            logger.info("Ingest response: %s", result)
-            return {
-                "statusCode": 200,
-                "run_id": run_id,
-                "readings_sent": len(readings),
-                "mode": result.get("mode"),
-            }
+    response = sqs.send_message(
+        QueueUrl=SQS_QUEUE_URL,
+        MessageBody=json.dumps(payload),
+    )
 
-    except error.HTTPError as exc:
-        body = exc.read().decode("utf-8")
-        logger.error("HTTP %s from backend: %s", exc.code, body)
-        raise
+    logger.info("SQS MessageId: %s", response["MessageId"])
 
-    except error.URLError as exc:
-        logger.error("Network error reaching backend: %s", exc)
-        raise
+    return {
+        "statusCode": 200,
+        "run_id": run_id,
+        "readings_sent": len(readings),
+        "sqs_message_id": response["MessageId"],
+        "mode": "queued",
+    }
 
 
 def _build_sensor_cycle():
@@ -135,7 +130,6 @@ def _generate_reading(sensor_type, recorded_at, progress):
         lng = round(BASE_LNG + (progress * 0.00025), 6)
         return _reading(sensor_type, progress, "segment", recorded_at, latitude=lat, longitude=lng)
 
-    # air_quality
     value = round(18 + (oscillation * 6) + random.uniform(-1, 1), 2)
     return _reading(sensor_type, value, "aqi", recorded_at, risk_flag=value > 22)
 
