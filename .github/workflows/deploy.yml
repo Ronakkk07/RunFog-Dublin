@@ -39,12 +39,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Collect static files (suppresses staticfiles warning)
+        env:
+          DJANGO_SECRET_KEY: "ci-test-key-not-real"
+          DJANGO_DEBUG: "True"
+          DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
+          RUNNERHUB_QUEUE_BACKEND: "inline"
+          RUNNERHUB_BACKEND_INGEST_TOKEN: "ci-token"
+          SQLITE_PATH: ":memory:"
+        run: python manage.py collectstatic --noinput
+
       - name: Run Django tests
         env:
           DJANGO_SECRET_KEY: "ci-test-key-not-real"
           DJANGO_DEBUG: "True"
           DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
-          RUNNERHUB_QUEUE_BACKEND: "sqs"
+          RUNNERHUB_QUEUE_BACKEND: "inline"
           RUNNERHUB_BACKEND_INGEST_TOKEN: "ci-token"
           SQLITE_PATH: ":memory:"
         run: |
