@@ -1,7 +1,7 @@
 import json
 
 from django.conf import settings
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -15,9 +15,32 @@ def dashboard(request):
     return render(request, "runnerhub/dashboard.html", context)
 
 
+@require_GET
+def health(request):
+    """
+    Elastic Beanstalk health check endpoint.
+    EB pings GET / by default but many setups use /health/.
+    Returns 200 so the environment stays Green.
+    """
+    return HttpResponse("ok", content_type="text/plain")
+
+
 @csrf_exempt
 @require_POST
 def ingest_fog_batch(request):
+    """
+    Public ingestion endpoint called by the fog node (Cloud9 simulator).
+    Accepts a JSON batch payload and either persists inline or enqueues to SQS.
+
+    Optional bearer-token check: set RUNNERHUB_BACKEND_INGEST_TOKEN to something
+    other than the default and the fog node must pass the same token.
+    """
+    token = settings.RUNNERHUB_BACKEND_INGEST_TOKEN
+    if token and token != "change-me":
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {token}":
+            return JsonResponse({"detail": "Unauthorized"}, status=401)
+
     try:
         payload = json.loads(request.body.decode("utf-8"))
     except json.JSONDecodeError:
@@ -34,6 +57,10 @@ def ingest_fog_batch(request):
 @csrf_exempt
 @require_POST
 def process_queue_message(request):
+    """
+    Internal endpoint called by AWS Lambda after it dequeues a SQS message.
+    Protected by the shared bearer token.
+    """
     auth_header = request.headers.get("Authorization", "")
     expected = f"Bearer {settings.RUNNERHUB_BACKEND_INGEST_TOKEN}"
     if auth_header != expected:

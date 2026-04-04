@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import random
 import time
 from datetime import timedelta
@@ -14,8 +15,12 @@ class Command(BaseCommand):
     help = "Generate runner telemetry and dispatch virtual fog batches to the backend."
 
     def add_arguments(self, parser):
-        parser.add_argument("--backend-url", default="http://127.0.0.1:8000/api/ingest/")
-        parser.add_argument("--fog-node-id", default="fog-dublin-01")
+        parser.add_argument(
+            "--backend-url",
+            default=os.getenv("RUNNERHUB_BACKEND_URL", "http://127.0.0.1:8000/api/ingest/"),
+            help="Full URL of the backend ingest endpoint.",
+        )
+        parser.add_argument("--fog-node-id", default="fog-dublin-cloud9")
         parser.add_argument("--athlete-name", default="Aoife Murphy")
         parser.add_argument("--city", default="Dublin")
         parser.add_argument("--batches", type=int, default=5)
@@ -26,6 +31,11 @@ class Command(BaseCommand):
         parser.add_argument("--pace-frequency", type=float, default=0.5)
         parser.add_argument("--gps-frequency", type=float, default=0.3)
         parser.add_argument("--air-quality-frequency", type=float, default=0.2)
+        parser.add_argument(
+            "--token",
+            default=os.getenv("RUNNERHUB_BACKEND_INGEST_TOKEN", ""),
+            help="Bearer token for the ingest endpoint (matches RUNNERHUB_BACKEND_INGEST_TOKEN).",
+        )
 
     def handle(self, *args, **options):
         run_id = f"run-{uuid4().hex[:8]}"
@@ -33,6 +43,9 @@ class Command(BaseCommand):
         base_lng = -6.2603
         now = timezone.now()
         sensor_cycle = self._build_sensor_cycle(options)
+
+        self.stdout.write(f"Starting fog simulation: {run_id}")
+        self.stdout.write(f"Target backend: {options['backend_url']}")
 
         for batch_index in range(options["batches"]):
             readings = []
@@ -53,9 +66,11 @@ class Command(BaseCommand):
                 "batch_id": f"{run_id}-batch-{batch_index + 1}",
                 "readings": readings,
             }
-            self._dispatch(options["backend_url"], payload)
-            self.stdout.write(self.style.SUCCESS(f"Dispatched {payload['batch_id']}"))
+            self._dispatch(options["backend_url"], payload, options["token"])
+            self.stdout.write(self.style.SUCCESS(f"Dispatched {payload['batch_id']} ({len(readings)} readings)"))
             time.sleep(options["dispatch_delay"])
+
+        self.stdout.write(self.style.SUCCESS(f"Simulation complete: {options['batches']} batches sent."))
 
     def _build_sensor_cycle(self, options):
         weighted = []
@@ -86,7 +101,6 @@ class Command(BaseCommand):
             latitude = round(base_lat + (progress * 0.0004), 6)
             longitude = round(base_lng + (progress * 0.00025), 6)
             return self._reading(sensor_type, progress, "segment", recorded_at, latitude, longitude)
-
         value = round(18 + (oscillation * 6) + random.uniform(-1, 1), 2)
         return self._reading(sensor_type, value, "aqi", recorded_at, risk_flag=value > 22)
 
@@ -102,16 +116,15 @@ class Command(BaseCommand):
             "risk_flag": risk_flag,
         }
 
-    def _dispatch(self, backend_url, payload):
+    def _dispatch(self, backend_url, payload, token=""):
         encoded = json.dumps(payload).encode("utf-8")
-        req = request.Request(
-            backend_url,
-            data=encoded,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = request.Request(backend_url, data=encoded, headers=headers, method="POST")
         try:
-            with request.urlopen(req, timeout=10) as response:
-                response.read()
+            with request.urlopen(req, timeout=15) as response:
+                body = response.read().decode("utf-8")
+                self.stdout.write(f"  Response: {body}")
         except error.URLError as exc:
             raise RuntimeError(f"Fog dispatch failed: {exc}") from exc
