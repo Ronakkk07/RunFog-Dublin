@@ -1,77 +1,136 @@
 # RunFog Dublin
 
-RunFog Dublin is a fog and edge computing coursework project for runner telemetry in Dublin. It simulates wearable and environmental sensors, processes them through virtual fog nodes, and pushes the data into a cloud-ready Django backend with queue-ready ingestion.
+RunFog Dublin is a fog and edge computing coursework project for runner telemetry in Dublin. It simulates wearable and environmental sensors, batches them through a fog layer, and presents the results in a Django dashboard that can run locally or on AWS.
 
 ## Architecture
 
-1. Sensors: five virtual sensor types generate live readings for runners.
-2. Fog node: batches, enriches, and forwards readings through a single payload.
-3. Backend: Django exposes ingestion APIs and a responsive dashboard.
-4. Scalability: the backend can process inline for local demos or publish batches to Amazon SQS.
-5. Cloud processing: an AWS Lambda consumer reads from SQS and posts processed messages back into the backend.
-6. Hosting: the web service is Dockerised so it can be deployed on Elastic Beanstalk and pulled into Cloud9 consistently.
+1. Sensors generate heart rate, cadence, pace, GPS, and air quality readings.
+2. A fog node batches those readings into a single payload.
+3. Django accepts the payload, either storing it inline or publishing it to Amazon SQS.
+4. An AWS Lambda consumer reads SQS messages and posts them back to the backend for persistence.
+5. The dashboard polls the summary API so scheduled ingestion appears automatically in the frontend.
+6. A manual trigger button can either generate data locally or invoke the AWS ingestion Lambda.
 
-## Sensor Types
-
-- Heart rate
-- Cadence
-- Pace
-- GPS
-- Air quality
-
-## Local Setup
+## Local setup
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
 
-In another terminal, simulate fog traffic:
+Open `http://127.0.0.1:8000/`.
+
+### Local data flow options
+
+Use the dashboard button:
+
+- `RUNNERHUB_MANUAL_TRIGGER_MODE=local` generates a batch inside Django.
+- `RUNNERHUB_MANUAL_TRIGGER_MODE=lambda` invokes the AWS ingestion Lambda from the backend.
+
+Or run the simulator manually:
 
 ```bash
-python manage.py simulate_fog --batches 6 --readings-per-batch 20
+python manage.py simulate_fog --backend-url http://127.0.0.1:8000/api/ingest/
 ```
 
-Open `http://127.0.0.1:8000/` to view the dashboard.
-
-## AWS Deployment Path
-
-### Elastic Beanstalk backend
-
-1. Create an Elastic Beanstalk Docker environment.
-2. Set environment variables:
-   - `DJANGO_DEBUG=False`
-   - `DJANGO_ALLOWED_HOSTS=<your-eb-domain>`
-   - `DJANGO_CSRF_TRUSTED_ORIGINS=https://<your-eb-domain>`
-   - `RUNNERHUB_QUEUE_BACKEND=sqs`
-   - `RUNNERHUB_SQS_QUEUE_URL=<your-sqs-url>`
-   - `RUNNERHUB_BACKEND_INGEST_TOKEN=<shared-secret>`
-3. Deploy this repository as-is because the Dockerfile is included.
-
-### SQS and Lambda
-
-1. Create an SQS queue for fog payload batches.
-2. Create a Lambda function using `aws/lambda_consumer.py`.
-3. Set Lambda environment variables:
-   - `RUNNERHUB_PROCESS_URL=https://<your-eb-domain>/api/internal/process/`
-   - `RUNNERHUB_BACKEND_INGEST_TOKEN=<shared-secret>`
-4. Add the SQS queue as the Lambda trigger.
-
-### Cloud9 fog simulation
-
-Pull this repository into Cloud9 and run:
+To keep batches flowing from your machine:
 
 ```bash
-pip install -r requirements.txt
-python manage.py simulate_fog --backend-url https://<your-eb-domain>/api/ingest/
+bash ./fog_runner.sh
 ```
 
-## Coursework Fit
+## AWS deployment
+
+### 1. Create the backend on Elastic Beanstalk
+
+Deploy this repository as a Docker application. Set these Elastic Beanstalk environment variables:
+
+- `DJANGO_DEBUG=False`
+- `DJANGO_ALLOWED_HOSTS=<your-eb-domain>`
+- `DJANGO_CSRF_TRUSTED_ORIGINS=https://<your-eb-domain>`
+- `RUNNERHUB_QUEUE_BACKEND=sqs`
+- `RUNNERHUB_SQS_QUEUE_URL=<your-sqs-url>`
+- `RUNNERHUB_BACKEND_INGEST_TOKEN=<shared-secret>`
+- `RUNNERHUB_MANUAL_TRIGGER_MODE=lambda`
+- `RUNNERHUB_INGESTOR_LAMBDA_NAME=<lambda-fog-injector-name>`
+- `AWS_REGION=<your-region>`
+- `RUNNERHUB_FRONTEND_POLL_SECONDS=15`
+
+The Beanstalk instance profile must be allowed to invoke the ingestion Lambda if you want the frontend button to trigger AWS ingestion.
+
+### 2. Create SQS
+
+Create an SQS queue for batch payloads, for example `runfog-batches`.
+
+### 3. Deploy the Lambda consumer
+
+Use `aws/lambda_consumer.py` for the SQS-triggered Lambda.
+
+Required Lambda environment variables:
+
+- `RUNNERHUB_PROCESS_URL=https://<your-eb-domain>/api/internal/process/`
+- `RUNNERHUB_BACKEND_INGEST_TOKEN=<shared-secret>`
+
+Attach the SQS queue as the trigger.
+
+### 4. Deploy the ingestion Lambda
+
+Use `aws/lambda_fog_injector.py` for scheduled or manual telemetry generation.
+
+Required environment variables:
+
+- `RUNNERHUB_SQS_QUEUE_URL=<your-sqs-url>`
+- `AWS_REGION=<your-region>`
+- `FOG_READINGS_PER_BATCH=20`
+- `FOG_NODE_ID=fog-lambda-cloud`
+- `FOG_ATHLETE_NAME=Ciaran Kelly`
+- `FOG_CITY=Dublin`
+
+Optional frequency controls:
+
+- `FREQ_HEART_RATE`
+- `FREQ_CADENCE`
+- `FREQ_PACE`
+- `FREQ_GPS`
+- `FREQ_AIR_QUALITY`
+
+### 5. Schedule automatic ingestion
+
+Create an EventBridge rule or EventBridge Scheduler entry that invokes the ingestion Lambda on a fixed interval, such as every 2 minutes.
+
+Example schedule expression:
+
+```text
+rate(2 minutes)
+```
+
+That gives you:
+
+`EventBridge -> lambda_fog_injector -> SQS -> lambda_consumer -> Elastic Beanstalk -> dashboard polling`
+
+## Local AWS credentials
+
+When developing locally, configure AWS credentials on your machine so Django can invoke Lambda and publish to SQS when needed:
+
+```bash
+aws configure
+```
+
+Or set standard AWS environment variables such as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION`.
+
+## Tests
+
+```bash
+python manage.py test
+```
+
+## Coursework fit
 
 - Sensor and fog layer: configurable simulated sensors and virtual fog dispatch.
 - Backend layer: scalable ingestion API, queue integration, and dashboarding.
-- Cloud deployment: Docker + Elastic Beanstalk + SQS + Lambda.
-- Runner focus: a Strava-inspired Dublin running telemetry scenario that is practical to demo and explain.
+- Cloud deployment: Docker, Elastic Beanstalk, SQS, Lambda, and EventBridge scheduling.
+- Runner focus: a Strava-inspired Dublin running telemetry scenario that is practical to demo.

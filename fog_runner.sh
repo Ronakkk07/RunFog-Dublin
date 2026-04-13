@@ -1,7 +1,7 @@
 #!/bin/bash
 # fog_runner.sh
-# Simulates a continuously running fog node dispatching to the EB backend.
-# Run this in Cloud9 to keep data flowing into the dashboard.
+# Simulates a continuously running fog node dispatching to the backend.
+# Run this locally to keep data flowing into the dashboard.
 #
 # Usage:
 #   chmod +x fog_runner.sh
@@ -11,8 +11,8 @@
 
 set -e
 
-BACKEND_URL="${RUNNERHUB_BACKEND_URL:-https://fog-prod.eba-rmump5dr.us-east-1.elasticbeanstalk.com/api/ingest/}"
-TOKEN="${RUNNERHUB_BACKEND_INGEST_TOKEN:-runfog-dublin-token07}"
+BACKEND_URL="${RUNNERHUB_BACKEND_URL:-http://127.0.0.1:8000/api/ingest/}"
+TOKEN="${RUNNERHUB_BACKEND_INGEST_TOKEN:-change-me-local}"
 BATCHES="${FOG_BATCHES:-3}"
 READINGS="${FOG_READINGS_PER_BATCH:-15}"
 DELAY="${FOG_DISPATCH_DELAY:-2}"

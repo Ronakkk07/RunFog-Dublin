@@ -54,6 +54,32 @@ h1 {
     color: var(--muted);
 }
 
+.hero-actions {
+    margin-top: 24px;
+}
+
+.action-button {
+    border: 0;
+    border-radius: 999px;
+    padding: 12px 20px;
+    font: inherit;
+    font-weight: 700;
+    color: #f6fbf8;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+    cursor: pointer;
+    box-shadow: 0 14px 28px rgba(14, 62, 49, 0.18);
+}
+
+.action-button:disabled {
+    cursor: wait;
+    opacity: 0.75;
+}
+
+.action-status {
+    margin: 12px 0 0;
+    color: var(--muted);
+}
+
 .hero-panel,
 .card,
 .table-shell {
@@ -108,6 +134,10 @@ h1 {
 .section-header p,
 .card p {
     color: var(--muted);
+}
+
+.empty-card {
+    min-height: 180px;
 }
 
 .table-shell {

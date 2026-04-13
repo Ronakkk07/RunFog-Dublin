@@ -1,11 +1,13 @@
 import json
 import logging
 from statistics import mean
+from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 
+from .fog import build_fog_payload, env_frequencies
 from .models import SensorReading
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,30 @@ def publish_or_process(batch_payload):
     return {"mode": "inline"}
 
 
+def trigger_ingestion():
+    trigger_mode = settings.RUNNERHUB_MANUAL_TRIGGER_MODE.lower()
+    if trigger_mode == "lambda":
+        return _invoke_ingestor_lambda()
+    if trigger_mode != "local":
+        raise RuntimeError("RUNNERHUB_MANUAL_TRIGGER_MODE must be 'local' or 'lambda'")
+
+    payload = build_fog_payload(
+        fog_node_id="fog-manual-local",
+        athlete_name="Manual Trigger Runner",
+        city="Dublin",
+        readings_per_batch=20,
+        run_id=f"run-manual-{uuid4().hex[:8]}",
+        frequencies=env_frequencies(),
+    )
+    result = publish_or_process(payload)
+    return {
+        "trigger_mode": "local",
+        "run_id": payload["run_id"],
+        "readings_sent": len(payload["readings"]),
+        **result,
+    }
+
+
 def _publish_to_sqs(batch_payload):
     if not boto3:
         raise RuntimeError("boto3 is required when RUNNERHUB_QUEUE_BACKEND=sqs")
@@ -37,6 +63,33 @@ def _publish_to_sqs(batch_payload):
         QueueUrl=settings.RUNNERHUB_SQS_QUEUE_URL,
         MessageBody=json.dumps(batch_payload),
     )
+
+
+def _invoke_ingestor_lambda():
+    if not boto3:
+        raise RuntimeError("boto3 is required when RUNNERHUB_MANUAL_TRIGGER_MODE=lambda")
+    if not settings.RUNNERHUB_INGESTOR_LAMBDA_NAME:
+        raise RuntimeError("RUNNERHUB_INGESTOR_LAMBDA_NAME is not configured")
+
+    client = boto3.client("lambda", region_name=settings.AWS_REGION)
+    run_id = f"run-manual-{uuid4().hex[:8]}"
+    response = client.invoke(
+        FunctionName=settings.RUNNERHUB_INGESTOR_LAMBDA_NAME,
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"run_id": run_id}).encode("utf-8"),
+    )
+
+    payload = response["Payload"].read().decode("utf-8")
+    if response.get("FunctionError"):
+        raise RuntimeError(payload or "Lambda invocation failed")
+
+    result = json.loads(payload or "{}")
+    return {
+        "trigger_mode": "lambda",
+        "run_id": result.get("run_id", run_id),
+        "readings_sent": result.get("readings_sent", 0),
+        "mode": result.get("mode", "queued"),
+    }
 
 
 @transaction.atomic

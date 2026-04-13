@@ -77,3 +77,11 @@ class IngestionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "RunFog Dublin")
         self.assertContains(response, "Test Runner")
+
+    def test_manual_trigger_creates_data(self):
+        response = self.client.post("/api/manual-trigger/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trigger_mode"], "local")
+        self.assertGreater(response.json()["readings_sent"], 0)
+        self.assertGreater(SensorReading.objects.count(), 0)

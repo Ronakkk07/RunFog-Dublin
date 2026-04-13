@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>RunFog Dublin Dashboard</title>
     <link rel="stylesheet" href="/static/runnerhub/dashboard.css">
 </head>
@@ -13,22 +14,31 @@
                 <p class="eyebrow">Fog + Edge Runner Intelligence</p>
                 <h1>RunFog Dublin</h1>
                 <p class="hero-copy">
-                    A cloud-ready monitoring system for runners using Strava-style telemetry.
-                    Virtual fog nodes batch live run data and stream scalable payloads to the backend.
+                    A local-first telemetry dashboard for runner monitoring. AWS EventBridge can
+                    schedule ingestion automatically, while this dashboard keeps polling for fresh
+                    data and can manually trigger a new run when you need a quick demo.
                 </p>
+                <div class="hero-actions">
+                    <button id="manual-trigger-button" class="action-button" type="button">
+                        Trigger Ingestion
+                    </button>
+                    <p id="trigger-status" class="action-status">
+                        Manual trigger mode: {{ manual_trigger_mode }}. Auto-refresh every {{ frontend_poll_seconds }}s.
+                    </p>
+                </div>
             </div>
             <div class="hero-panel">
                 <div class="metric">
                     <span>Total readings</span>
-                    <strong>{{ total_readings }}</strong>
+                    <strong id="metric-total-readings">{{ total_readings }}</strong>
                 </div>
                 <div class="metric">
                     <span>Active runs</span>
-                    <strong>{{ active_runs }}</strong>
+                    <strong id="metric-active-runs">{{ active_runs }}</strong>
                 </div>
                 <div class="metric">
                     <span>Risk events</span>
-                    <strong>{{ risk_events }}</strong>
+                    <strong id="metric-risk-events">{{ risk_events }}</strong>
                 </div>
                 <div class="metric">
                     <span>Queue mode</span>
@@ -37,7 +47,7 @@
             </div>
         </section>
 
-        <section class="grid">
+        <section id="cards-grid" class="grid">
             {% for card in cards %}
             <article class="card">
                 <p class="card-label">{{ card.label }}</p>
@@ -47,10 +57,10 @@
                 <p>Last update: {{ card.latest_timestamp|date:"d M Y H:i:s" }}</p>
             </article>
             {% empty %}
-            <article class="card">
+            <article class="card empty-card">
                 <p class="card-label">No data yet</p>
-                <h2>Run the fog simulator</h2>
-                <p>Use the management command to generate Dublin runner telemetry and feed the backend.</p>
+                <h2>Trigger ingestion</h2>
+                <p>Use the button above or run the local simulator to start streaming telemetry.</p>
             </article>
             {% endfor %}
         </section>
@@ -72,7 +82,7 @@
                             <th>Window</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="recent-runs-body">
                         {% for run in recent_runs %}
                         <tr>
                             <td>{{ run.run_id }}</td>
@@ -92,5 +102,137 @@
             </div>
         </section>
     </main>
+
+    <script>
+        const summaryUrl = "{% url 'summary-api' %}";
+        const manualTriggerUrl = "{% url 'manual-trigger' %}";
+        const pollIntervalMs = {{ frontend_poll_seconds }} * 1000;
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+        const triggerButton = document.getElementById("manual-trigger-button");
+        const triggerStatus = document.getElementById("trigger-status");
+        const cardsGrid = document.getElementById("cards-grid");
+        const recentRunsBody = document.getElementById("recent-runs-body");
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) {
+                return "n/a";
+            }
+            const date = new Date(timestamp);
+            return new Intl.DateTimeFormat("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            }).format(date);
+        }
+
+        function formatTimeWindow(startedAt, latestAt) {
+            if (!startedAt || !latestAt) {
+                return "n/a";
+            }
+            const formatter = new Intl.DateTimeFormat("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            });
+            return `${formatter.format(new Date(startedAt))} - ${formatter.format(new Date(latestAt))}`;
+        }
+
+        function renderCards(cards) {
+            if (!cards.length) {
+                cardsGrid.innerHTML = `
+                    <article class="card empty-card">
+                        <p class="card-label">No data yet</p>
+                        <h2>Waiting for telemetry</h2>
+                        <p>The dashboard will refresh automatically when new data arrives.</p>
+                    </article>
+                `;
+                return;
+            }
+
+            cardsGrid.innerHTML = cards.map((card) => `
+                <article class="card">
+                    <p class="card-label">${card.label}</p>
+                    <h2>${card.latest_value} ${card.unit}</h2>
+                    <p>Average: ${card.average_value} ${card.unit}</p>
+                    <p>Risk flags: ${card.risk_events}</p>
+                    <p>Last update: ${formatTimestamp(card.latest_timestamp)}</p>
+                </article>
+            `).join("");
+        }
+
+        function renderRuns(runs) {
+            if (!runs.length) {
+                recentRunsBody.innerHTML = '<tr><td colspan="6">No runs ingested yet.</td></tr>';
+                return;
+            }
+
+            recentRunsBody.innerHTML = runs.map((run) => `
+                <tr>
+                    <td>${run.run_id}</td>
+                    <td>${run.athlete_name}</td>
+                    <td>${run.fog_node_id}</td>
+                    <td>${run.city}</td>
+                    <td>${run.reading_count}</td>
+                    <td>${formatTimeWindow(run.started_at, run.latest_at)}</td>
+                </tr>
+            `).join("");
+        }
+
+        async function refreshSummary() {
+            const response = await fetch(summaryUrl, { headers: { "Accept": "application/json" } });
+            if (!response.ok) {
+                throw new Error("Unable to refresh dashboard summary.");
+            }
+
+            const data = await response.json();
+            document.getElementById("metric-total-readings").textContent = data.total_readings;
+            document.getElementById("metric-active-runs").textContent = data.active_runs;
+            document.getElementById("metric-risk-events").textContent = data.risk_events;
+            renderCards(data.cards || []);
+            renderRuns(data.recent_runs || []);
+        }
+
+        async function triggerIngestion() {
+            triggerButton.disabled = true;
+            triggerStatus.textContent = "Triggering ingestion...";
+
+            try {
+                const response = await fetch(manualTriggerUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken,
+                    },
+                    body: JSON.stringify({}),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || "Manual trigger failed.");
+                }
+
+                triggerStatus.textContent = `Triggered ${data.trigger_mode} ingestion for ${data.run_id} with ${data.readings_sent} readings.`;
+                await refreshSummary();
+            } catch (error) {
+                triggerStatus.textContent = error.message;
+            } finally {
+                triggerButton.disabled = false;
+            }
+        }
+
+        triggerButton.addEventListener("click", triggerIngestion);
+
+        window.setInterval(async () => {
+            try {
+                await refreshSummary();
+            } catch (error) {
+                triggerStatus.textContent = "Waiting for the next successful dashboard refresh.";
+            }
+        }, pollIntervalMs);
+    </script>
 </body>
 </html>

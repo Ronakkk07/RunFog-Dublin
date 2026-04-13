@@ -6,12 +6,14 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .services import build_dashboard_summary, persist_batch, publish_or_process
+from .services import build_dashboard_summary, persist_batch, publish_or_process, trigger_ingestion
 
 
 def dashboard(request):
     context = build_dashboard_summary()
     context["queue_backend"] = settings.RUNNERHUB_QUEUE_BACKEND.upper()
+    context["manual_trigger_mode"] = settings.RUNNERHUB_MANUAL_TRIGGER_MODE.upper()
+    context["frontend_poll_seconds"] = settings.RUNNERHUB_FRONTEND_POLL_SECONDS
     return render(request, "runnerhub/dashboard.html", context)
 
 
@@ -78,3 +80,13 @@ def process_queue_message(request):
 @require_GET
 def summary_api(request):
     return JsonResponse(build_dashboard_summary())
+
+
+@require_POST
+def manual_trigger(request):
+    try:
+        result = trigger_ingestion()
+    except RuntimeError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    return JsonResponse({"status": "triggered", **result})
