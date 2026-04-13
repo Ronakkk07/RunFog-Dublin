@@ -17,6 +17,11 @@ try:
 except ImportError:  # pragma: no cover
     boto3 = None
 
+try:
+    from botocore.exceptions import BotoCoreError, ClientError
+except ImportError:  # pragma: no cover
+    BotoCoreError = ClientError = Exception
+
 
 def publish_or_process(batch_payload):
     backend = settings.RUNNERHUB_QUEUE_BACKEND
@@ -58,7 +63,7 @@ def _publish_to_sqs(batch_payload):
     if not settings.RUNNERHUB_SQS_QUEUE_URL:
         raise RuntimeError("RUNNERHUB_SQS_QUEUE_URL is not configured")
 
-    client = boto3.client("sqs")
+    client = boto3.client("sqs", region_name=settings.AWS_REGION)
     client.send_message(
         QueueUrl=settings.RUNNERHUB_SQS_QUEUE_URL,
         MessageBody=json.dumps(batch_payload),
@@ -71,25 +76,29 @@ def _invoke_ingestor_lambda():
     if not settings.RUNNERHUB_INGESTOR_LAMBDA_NAME:
         raise RuntimeError("RUNNERHUB_INGESTOR_LAMBDA_NAME is not configured")
 
-    client = boto3.client("lambda", region_name=settings.AWS_REGION)
-    run_id = f"run-manual-{uuid4().hex[:8]}"
-    response = client.invoke(
-        FunctionName=settings.RUNNERHUB_INGESTOR_LAMBDA_NAME,
-        InvocationType="RequestResponse",
-        Payload=json.dumps({"run_id": run_id}).encode("utf-8"),
-    )
+    try:
+        client = boto3.client("lambda", region_name=settings.AWS_REGION)
+        run_id = f"run-manual-{uuid4().hex[:8]}"
+        response = client.invoke(
+            FunctionName=settings.RUNNERHUB_INGESTOR_LAMBDA_NAME,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"run_id": run_id}).encode("utf-8"),
+        )
 
-    payload = response["Payload"].read().decode("utf-8")
-    if response.get("FunctionError"):
-        raise RuntimeError(payload or "Lambda invocation failed")
+        payload = response["Payload"].read().decode("utf-8")
+        if response.get("FunctionError"):
+            raise RuntimeError(payload or "Lambda invocation failed")
 
-    result = json.loads(payload or "{}")
-    return {
-        "trigger_mode": "lambda",
-        "run_id": result.get("run_id", run_id),
-        "readings_sent": result.get("readings_sent", 0),
-        "mode": result.get("mode", "queued"),
-    }
+        result = json.loads(payload or "{}")
+        return {
+            "trigger_mode": "lambda",
+            "run_id": result.get("run_id", run_id),
+            "readings_sent": result.get("readings_sent", 0),
+            "mode": result.get("mode", "queued"),
+        }
+    except (BotoCoreError, ClientError) as exc:
+        logger.exception("Manual Lambda invocation failed")
+        raise RuntimeError(f"Unable to invoke ingestion Lambda: {exc}") from exc
 
 
 @transaction.atomic

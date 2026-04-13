@@ -86,7 +86,7 @@ def summary_api(request):
 def manual_trigger(request):
     try:
         result = trigger_ingestion()
-    except RuntimeError as exc:
+    except Exception as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
     return JsonResponse({"status": "triggered", **result})

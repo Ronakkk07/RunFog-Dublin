@@ -210,7 +210,16 @@
                     },
                     body: JSON.stringify({}),
                 });
-                const data = await response.json();
+                const rawText = await response.text();
+                let data = {};
+                try {
+                    data = rawText ? JSON.parse(rawText) : {};
+                } catch (parseError) {
+                    if (!response.ok) {
+                        throw new Error(rawText || "Manual trigger failed.");
+                    }
+                    throw parseError;
+                }
                 if (!response.ok) {
                     throw new Error(data.detail || "Manual trigger failed.");
                 }

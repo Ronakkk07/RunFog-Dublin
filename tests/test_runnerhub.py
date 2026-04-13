@@ -2,12 +2,13 @@ import json
 from datetime import timedelta
 
 from django.conf import settings
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from runnerhub.models import SensorReading
 
 
+@override_settings(RUNNERHUB_QUEUE_BACKEND="inline", RUNNERHUB_MANUAL_TRIGGER_MODE="local", AWS_REGION="us-east-1")
 class IngestionTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -85,3 +86,10 @@ class IngestionTests(TestCase):
         self.assertEqual(response.json()["trigger_mode"], "local")
         self.assertGreater(response.json()["readings_sent"], 0)
         self.assertGreater(SensorReading.objects.count(), 0)
+
+    @override_settings(RUNNERHUB_MANUAL_TRIGGER_MODE="broken")
+    def test_manual_trigger_returns_json_error_for_invalid_mode(self):
+        response = self.client.post("/api/manual-trigger/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("RUNNERHUB_MANUAL_TRIGGER_MODE", response.json()["detail"])
