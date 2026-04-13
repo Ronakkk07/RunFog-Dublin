@@ -86,13 +86,15 @@ jobs:
         run: pip install awsebcli
 
       - name: Deploy to Elastic Beanstalk
+        env:
+          EB_VERSION_LABEL: deploy-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
         run: |
           eb init ${{ secrets.EB_APP_NAME }} \
             --platform Docker \
             --region us-east-1
           eb deploy ${{ secrets.EB_ENV_NAME }} \
             --staged \
-            --label "deploy-${{ github.sha }}" \
+            --label "${EB_VERSION_LABEL}" \
             --timeout 20
 
       - name: Verify deployment health
