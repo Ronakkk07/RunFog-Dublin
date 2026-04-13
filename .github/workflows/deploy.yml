@@ -4,13 +4,12 @@
 #
 # On every push to main:
 #   1. Run tests
-#   2. Deploy to Elastic Beanstalk (migrations run automatically via .ebextensions)
+#   2. Deploy to Elastic Beanstalk
 #
-# Required GitHub Secrets (Settings → Secrets and variables → Actions):
-#   AWS_ACCESS_KEY_ID       - from your AWS Academy session credentials
-#   AWS_SECRET_ACCESS_KEY   - from your AWS Academy session credentials
-#   AWS_SESSION_TOKEN       - from your AWS Academy session credentials (Academy labs need this)
-#   EB_APP_NAME             - your EB application name (e.g. runfog-app)
+# Required GitHub Secrets (Settings -> Secrets and variables -> Actions):
+#   AWS_ACCESS_KEY_ID       - IAM access key for GitHub Actions
+#   AWS_SECRET_ACCESS_KEY   - IAM secret key for GitHub Actions
+#   EB_APP_NAME             - your EB application name (e.g. main)
 #   EB_ENV_NAME             - your EB environment name (e.g. runfog-prod)
 
 name: Test and Deploy
@@ -39,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Collect static files (suppresses staticfiles warning)
+      - name: Collect static files
         env:
           DJANGO_SECRET_KEY: "ci-test-key-not-real"
           DJANGO_DEBUG: "True"
@@ -65,7 +64,6 @@ jobs:
     name: Deploy to Elastic Beanstalk
     runs-on: ubuntu-latest
     needs: test
-    # Only deploy on pushes to main, not on pull requests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -77,10 +75,9 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
-      - name: Set up Python (for EB CLI)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -88,24 +85,10 @@ jobs:
       - name: Install EB CLI
         run: pip install awsebcli
 
-      - name: Create deployment package
-        run: |
-          # Zip everything except what's in .gitignore / .dockerignore
-          zip -r deploy.zip . \
-            --exclude "*.git*" \
-            --exclude ".venv/*" \
-            --exclude "__pycache__/*" \
-            --exclude "*.pyc" \
-            --exclude "db.sqlite3" \
-            --exclude "staticfiles/*" \
-            --exclude ".env" \
-            --exclude "*.env.*" \
-            --exclude ".pytest_cache/*"
-
-      - name: Deploy to EB
+      - name: Deploy to Elastic Beanstalk
         run: |
           eb init ${{ secrets.EB_APP_NAME }} \
-            --platform docker \
+            --platform Docker \
             --region us-east-1
           eb deploy ${{ secrets.EB_ENV_NAME }} \
             --staged \
@@ -116,3 +99,12 @@ jobs:
         run: |
           sleep 30
           eb health ${{ secrets.EB_ENV_NAME }}
+
+      - name: Verify live health endpoint
+        run: |
+          ENV_URL=$(aws elasticbeanstalk describe-environments \
+            --application-name "${{ secrets.EB_APP_NAME }}" \
+            --environment-names "${{ secrets.EB_ENV_NAME }}" \
+            --query "Environments[0].CNAME" \
+            --output text)
+          curl --fail --silent --show-error "http://${ENV_URL}/health/"
