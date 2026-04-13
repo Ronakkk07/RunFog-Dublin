@@ -13,7 +13,7 @@ COPY . .
 RUN python manage.py collectstatic --noinput
 
 COPY startup.sh /startup.sh
-RUN chmod +x /startup.sh
+RUN sed -i 's/\r$//' /startup.sh && chmod +x /startup.sh
 
 EXPOSE 8000
 
