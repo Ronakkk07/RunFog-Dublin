@@ -288,6 +288,26 @@ p {
     gap: 14px;
 }
 
+#anomaly-list {
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+
+#anomaly-list::-webkit-scrollbar {
+    width: 10px;
+}
+
+#anomaly-list::-webkit-scrollbar-thumb {
+    background: rgba(19, 32, 24, 0.2);
+    border-radius: 999px;
+}
+
+#anomaly-list::-webkit-scrollbar-track {
+    background: rgba(19, 32, 24, 0.06);
+    border-radius: 999px;
+}
+
 .risk-card h3 {
     margin-bottom: 8px;
 }
