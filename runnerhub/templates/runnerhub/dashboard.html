@@ -23,7 +23,10 @@
                         Trigger Ingestion
                     </button>
                     <p id="trigger-status" class="action-status">
-                        Manual trigger mode: {{ manual_trigger_mode }}. Auto-refresh every {{ frontend_poll_seconds }}s.
+                        Manual trigger mode: {{ manual_trigger_mode }}.
+                    </p>
+                    <p id="refresh-status" class="refresh-status">
+                        Auto-refresh every {{ frontend_poll_seconds }}s.
                     </p>
                 </div>
             </div>
@@ -110,6 +113,7 @@
         const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         const triggerButton = document.getElementById("manual-trigger-button");
         const triggerStatus = document.getElementById("trigger-status");
+        const refreshStatus = document.getElementById("refresh-status");
         const cardsGrid = document.getElementById("cards-grid");
         const recentRunsBody = document.getElementById("recent-runs-body");
 
@@ -195,6 +199,7 @@
             document.getElementById("metric-risk-events").textContent = data.risk_events;
             renderCards(data.cards || []);
             renderRuns(data.recent_runs || []);
+            refreshStatus.textContent = `Dashboard refreshed at ${formatTimestamp(new Date().toISOString())}. Auto-refresh every {{ frontend_poll_seconds }}s.`;
         }
 
         async function triggerIngestion() {
@@ -235,11 +240,15 @@
 
         triggerButton.addEventListener("click", triggerIngestion);
 
+        refreshSummary().catch(() => {
+            refreshStatus.textContent = "Initial dashboard refresh failed. Retrying automatically.";
+        });
+
         window.setInterval(async () => {
             try {
                 await refreshSummary();
             } catch (error) {
-                triggerStatus.textContent = "Waiting for the next successful dashboard refresh.";
+                refreshStatus.textContent = "Waiting for the next successful dashboard refresh.";
             }
         }, pollIntervalMs);
     </script>

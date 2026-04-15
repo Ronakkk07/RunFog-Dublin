@@ -95,7 +95,7 @@ def _invoke_ingestor_lambda():
                 nested_body = json.loads(result["body"])
             except json.JSONDecodeError:
                 nested_body = {}
-            else:
+            if isinstance(nested_body, dict):
                 result = {**result, **nested_body}
 
         if result.get("statusCode") not in (None, 200):

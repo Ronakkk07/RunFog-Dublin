@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from unittest.mock import Mock, patch
 
 from django.conf import settings
 from django.test import Client, TestCase, override_settings
@@ -93,3 +94,30 @@ class IngestionTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("RUNNERHUB_MANUAL_TRIGGER_MODE", response.json()["detail"])
+
+    @override_settings(RUNNERHUB_MANUAL_TRIGGER_MODE="lambda", RUNNERHUB_INGESTOR_LAMBDA_NAME="runfog-fog-injector")
+    @patch("runnerhub.services.boto3")
+    def test_manual_trigger_handles_lambda_proxy_body(self, mock_boto3):
+        payload_stream = Mock()
+        payload_stream.read.return_value = json.dumps(
+            {
+                "statusCode": 200,
+                "body": json.dumps(
+                    {
+                        "run_id": "run-manual-proxy",
+                        "readings_sent": 20,
+                        "mode": "queued",
+                    }
+                ),
+            }
+        ).encode("utf-8")
+
+        lambda_client = Mock()
+        lambda_client.invoke.return_value = {"Payload": payload_stream}
+        mock_boto3.client.return_value = lambda_client
+
+        response = self.client.post("/api/manual-trigger/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["trigger_mode"], "lambda")
+        self.assertEqual(response.json()["readings_sent"], 20)
