@@ -1,10 +1,12 @@
 import json
 import logging
+from collections import defaultdict
 from statistics import mean
 from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .fog import build_fog_payload, env_frequencies
@@ -21,6 +23,23 @@ try:
     from botocore.exceptions import BotoCoreError, ClientError
 except ImportError:  # pragma: no cover
     BotoCoreError = ClientError = Exception
+
+
+TIME_RANGE_OPTIONS = {
+    "all": {"label": "All time", "delta": None},
+    "1h": {"label": "Last hour", "delta": 60 * 60},
+    "24h": {"label": "Last 24 hours", "delta": 24 * 60 * 60},
+    "7d": {"label": "Last 7 days", "delta": 7 * 24 * 60 * 60},
+    "30d": {"label": "Last 30 days", "delta": 30 * 24 * 60 * 60},
+}
+
+SENSOR_COLORS = {
+    "heart_rate": "#d85858",
+    "cadence": "#d79c3a",
+    "pace": "#2e7d62",
+    "gps": "#3f6fb3",
+    "air_quality": "#7560aa",
+}
 
 
 def publish_or_process(batch_payload):
@@ -150,8 +169,137 @@ def persist_batch(batch_payload):
     return len(readings)
 
 
-def build_dashboard_summary():
-    readings = SensorReading.objects.all()[:500]
+def normalize_filters(filters=None):
+    filters = filters or {}
+    sensor_keys = {choice[0] for choice in SensorReading.SENSOR_TYPES}
+    time_range = filters.get("time_range", "all")
+    sensor_type = filters.get("sensor_type", "")
+
+    if time_range not in TIME_RANGE_OPTIONS:
+        time_range = "all"
+    if sensor_type and sensor_type not in sensor_keys:
+        sensor_type = ""
+
+    return {
+        "athlete_name": (filters.get("athlete_name") or "").strip(),
+        "run_id": (filters.get("run_id") or "").strip(),
+        "sensor_type": sensor_type,
+        "time_range": time_range,
+    }
+
+
+def get_filtered_queryset(filters=None):
+    filters = normalize_filters(filters)
+    queryset = SensorReading.objects.all()
+
+    if filters["athlete_name"]:
+        queryset = queryset.filter(athlete_name=filters["athlete_name"])
+    if filters["run_id"]:
+        queryset = queryset.filter(run_id=filters["run_id"])
+    if filters["sensor_type"]:
+        queryset = queryset.filter(sensor_type=filters["sensor_type"])
+
+    delta_seconds = TIME_RANGE_OPTIONS[filters["time_range"]]["delta"]
+    if delta_seconds:
+        queryset = queryset.filter(recorded_at__gte=timezone.now() - timezone.timedelta(seconds=delta_seconds))
+
+    return queryset.order_by("-recorded_at")
+
+
+def build_dashboard_summary(filters=None):
+    filters = normalize_filters(filters)
+    queryset = get_filtered_queryset(filters)
+    readings = list(queryset[:1000])
+
+    return {
+        "selected_filters": filters,
+        "filter_options": build_filter_options(),
+        "total_readings": queryset.count(),
+        "active_runs": queryset.values("run_id").distinct().count(),
+        "risk_events": queryset.filter(risk_flag=True).count(),
+        "cards": build_metric_cards(readings),
+        "recent_runs": build_recent_runs(readings),
+        "trends": build_trend_series(readings),
+        "risk_explanations": build_risk_explanations(readings),
+        "has_filters": any(filters.values()),
+    }
+
+
+def build_run_detail(run_id):
+    queryset = SensorReading.objects.filter(run_id=run_id).order_by("-recorded_at")
+    readings = list(queryset[:1000])
+    if not readings:
+        return None
+
+    latest = readings[0]
+    oldest = readings[-1]
+    return {
+        "run_id": run_id,
+        "athlete_name": latest.athlete_name,
+        "city": latest.city,
+        "fog_node_id": latest.fog_node_id,
+        "reading_count": len(readings),
+        "risk_events": sum(1 for reading in readings if reading.risk_flag),
+        "started_at": oldest.recorded_at,
+        "latest_at": latest.recorded_at,
+        "cards": build_metric_cards(readings),
+        "trends": build_trend_series(readings, max_points=20),
+        "risk_explanations": build_risk_explanations(readings),
+        "readings": [
+            serialize_reading(reading)
+            for reading in readings[:80]
+        ],
+        "gps_path": [
+            {
+                "latitude": reading.latitude,
+                "longitude": reading.longitude,
+                "recorded_at": serialize_timestamp(reading.recorded_at),
+            }
+            for reading in reversed(readings)
+            if reading.sensor_type == "gps" and reading.latitude is not None and reading.longitude is not None
+        ],
+    }
+
+
+def build_export_rows(filters=None):
+    return [serialize_reading(reading) for reading in get_filtered_queryset(filters)]
+
+
+def build_filter_options():
+    sensor_types = [{"value": key, "label": label} for key, label in SensorReading.SENSOR_TYPES]
+    athletes = list(
+        SensorReading.objects.order_by("athlete_name")
+        .values_list("athlete_name", flat=True)
+        .distinct()
+    )
+    run_choices = []
+    seen_runs = set()
+    for reading in SensorReading.objects.order_by("-recorded_at")[:200]:
+        if reading.run_id in seen_runs:
+            continue
+        seen_runs.add(reading.run_id)
+        run_choices.append(
+            {
+                "run_id": reading.run_id,
+                "athlete_name": reading.athlete_name,
+                "label": f"{reading.run_id} - {reading.athlete_name}",
+            }
+        )
+        if len(run_choices) == 30:
+            break
+
+    return {
+        "athletes": athletes,
+        "runs": run_choices,
+        "sensor_types": sensor_types,
+        "time_ranges": [
+            {"value": value, "label": config["label"]}
+            for value, config in TIME_RANGE_OPTIONS.items()
+        ],
+    }
+
+
+def build_metric_cards(readings):
     sensor_types = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
     cards = []
 
@@ -167,11 +315,16 @@ def build_dashboard_summary():
                 "latest_value": round(latest.reading_value, 2),
                 "unit": latest.unit,
                 "average_value": round(mean(item.reading_value for item in typed), 2),
-                "latest_timestamp": latest.recorded_at,
+                "latest_timestamp": serialize_timestamp(latest.recorded_at),
                 "risk_events": sum(1 for item in typed if item.risk_flag),
+                "color": SENSOR_COLORS.get(sensor_type, "#1d6b53"),
             }
         )
 
+    return cards
+
+
+def build_recent_runs(readings):
     recent_runs = []
     seen_runs = set()
     for reading in readings:
@@ -186,17 +339,94 @@ def build_dashboard_summary():
                 "city": reading.city,
                 "fog_node_id": reading.fog_node_id,
                 "reading_count": len(run_readings),
-                "started_at": run_readings[-1].recorded_at,
-                "latest_at": run_readings[0].recorded_at,
+                "risk_events": sum(1 for item in run_readings if item.risk_flag),
+                "started_at": serialize_timestamp(run_readings[-1].recorded_at),
+                "latest_at": serialize_timestamp(run_readings[0].recorded_at),
             }
         )
-        if len(recent_runs) == 6:
+        if len(recent_runs) == 8:
             break
+    return recent_runs
 
+
+def build_trend_series(readings, max_points=12):
+    sensor_types = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
+    grouped = defaultdict(list)
+    for reading in readings:
+        grouped[reading.sensor_type].append(reading)
+
+    trends = []
+    for sensor_type, label in sensor_types.items():
+        typed = grouped.get(sensor_type, [])
+        if not typed:
+            continue
+        points = list(reversed(typed[:max_points]))
+        trends.append(
+            {
+                "key": sensor_type,
+                "label": label,
+                "unit": typed[0].unit,
+                "color": SENSOR_COLORS.get(sensor_type, "#1d6b53"),
+                "points": [
+                    {
+                        "timestamp": serialize_timestamp(point.recorded_at),
+                        "value": round(point.reading_value, 2),
+                    }
+                    for point in points
+                ],
+            }
+        )
+    return trends
+
+
+def build_risk_explanations(readings):
+    risk_readings = [reading for reading in readings if reading.risk_flag][:12]
+    sensor_labels = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
+    return [
+        {
+            "run_id": reading.run_id,
+            "athlete_name": reading.athlete_name,
+            "sensor_type": reading.sensor_type,
+            "sensor_label": sensor_labels.get(reading.sensor_type, reading.sensor_type),
+            "reading_value": round(reading.reading_value, 2),
+            "unit": reading.unit,
+            "recorded_at": serialize_timestamp(reading.recorded_at),
+            "explanation": risk_explanation(reading),
+        }
+        for reading in risk_readings
+    ]
+
+
+def risk_explanation(reading):
+    if reading.sensor_type == "heart_rate":
+        return f"Heart rate rose above the 170 bpm alert threshold at {round(reading.reading_value, 1)} bpm."
+    if reading.sensor_type == "cadence":
+        return f"Cadence dropped below the 155 spm efficiency threshold at {round(reading.reading_value, 1)} spm."
+    if reading.sensor_type == "pace":
+        return f"Pace slowed beyond the 6.2 min/km threshold at {round(reading.reading_value, 1)} min/km."
+    if reading.sensor_type == "air_quality":
+        return f"Air quality crossed the AQI 22 comfort threshold at {round(reading.reading_value, 1)} AQI."
+    return "This reading was marked as risky by the fog node rules."
+
+
+def serialize_reading(reading):
     return {
-        "total_readings": SensorReading.objects.count(),
-        "active_runs": len(seen_runs),
-        "risk_events": SensorReading.objects.filter(risk_flag=True).count(),
-        "cards": cards,
-        "recent_runs": recent_runs,
+        "run_id": reading.run_id,
+        "athlete_name": reading.athlete_name,
+        "city": reading.city,
+        "fog_node_id": reading.fog_node_id,
+        "sensor_type": reading.sensor_type,
+        "sensor_label": reading.get_sensor_type_display(),
+        "reading_value": round(reading.reading_value, 2),
+        "unit": reading.unit,
+        "latitude": reading.latitude,
+        "longitude": reading.longitude,
+        "quality_score": round(reading.quality_score, 2),
+        "risk_flag": reading.risk_flag,
+        "risk_explanation": risk_explanation(reading) if reading.risk_flag else "",
+        "recorded_at": serialize_timestamp(reading.recorded_at),
     }
+
+
+def serialize_timestamp(value):
+    return value.isoformat() if value else None

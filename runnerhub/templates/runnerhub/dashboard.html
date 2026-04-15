@@ -14,14 +14,15 @@
                 <p class="eyebrow">Fog + Edge Runner Intelligence</p>
                 <h1>RunFog Dublin</h1>
                 <p class="hero-copy">
-                    A local-first telemetry dashboard for runner monitoring. AWS EventBridge can
-                    schedule ingestion automatically, while this dashboard keeps polling for fresh
-                    data and can manually trigger a new run when you need a quick demo.
+                    Filter live runner telemetry, explain flagged risk events, inspect trends by sensor,
+                    and export the exact subset you are analysing.
                 </p>
                 <div class="hero-actions">
                     <button id="manual-trigger-button" class="action-button" type="button">
                         Trigger Ingestion
                     </button>
+                    <a id="export-json-link" class="secondary-link" href="{% url 'export-readings' %}?format=json">Export JSON</a>
+                    <a id="export-csv-link" class="secondary-link" href="{% url 'export-readings' %}?format=csv">Export CSV</a>
                     <p id="trigger-status" class="action-status">
                         Manual trigger mode: {{ manual_trigger_mode }}.
                     </p>
@@ -50,6 +51,54 @@
             </div>
         </section>
 
+        <section class="filters-panel panel">
+            <div class="section-header">
+                <h2>Filters</h2>
+                <p>Slice the dashboard by athlete, run, sensor, or time window.</p>
+            </div>
+            <form id="filters-form" class="filters-grid">
+                <label class="filter-field">
+                    <span>Athlete</span>
+                    <select id="filter-athlete" name="athlete_name">
+                        <option value="">All athletes</option>
+                        {% for athlete in filter_options.athletes %}
+                        <option value="{{ athlete }}" {% if selected_filters.athlete_name == athlete %}selected{% endif %}>{{ athlete }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="filter-field">
+                    <span>Run</span>
+                    <select id="filter-run" name="run_id">
+                        <option value="">All runs</option>
+                        {% for run in filter_options.runs %}
+                        <option value="{{ run.run_id }}" {% if selected_filters.run_id == run.run_id %}selected{% endif %}>{{ run.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="filter-field">
+                    <span>Sensor</span>
+                    <select id="filter-sensor" name="sensor_type">
+                        <option value="">All sensors</option>
+                        {% for sensor in filter_options.sensor_types %}
+                        <option value="{{ sensor.value }}" {% if selected_filters.sensor_type == sensor.value %}selected{% endif %}>{{ sensor.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="filter-field">
+                    <span>Time range</span>
+                    <select id="filter-time-range" name="time_range">
+                        {% for option in filter_options.time_ranges %}
+                        <option value="{{ option.value }}" {% if selected_filters.time_range == option.value %}selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <div class="filters-actions">
+                    <button class="action-button" type="submit">Apply Filters</button>
+                    <button id="reset-filters-button" class="ghost-button" type="button">Reset</button>
+                </div>
+            </form>
+        </section>
+
         <section id="cards-grid" class="grid">
             {% for card in cards %}
             <article class="card">
@@ -63,15 +112,33 @@
             <article class="card empty-card">
                 <p class="card-label">No data yet</p>
                 <h2>Trigger ingestion</h2>
-                <p>Use the button above or run the local simulator to start streaming telemetry.</p>
+                <p>Use the button above or wait for the scheduler to send telemetry.</p>
             </article>
             {% endfor %}
         </section>
 
-        <section class="runs">
+        <section class="analytics-grid">
+            <section class="panel">
+                <div class="section-header">
+                    <h2>Trend Charts</h2>
+                    <p>Recent values per sensor, refreshed from the filtered dataset.</p>
+                </div>
+                <div id="trend-grid" class="trend-grid"></div>
+            </section>
+
+            <section class="panel">
+                <div class="section-header">
+                    <h2>Risk Explanations</h2>
+                    <p>Human-readable reasons for the latest flagged readings.</p>
+                </div>
+                <div id="risk-list" class="risk-list"></div>
+            </section>
+        </section>
+
+        <section class="runs panel">
             <div class="section-header">
                 <h2>Recent Runs</h2>
-                <p>Fog nodes aggregate wearable and environmental data before it reaches the cloud.</p>
+                <p>Open any run for detailed telemetry and exports.</p>
             </div>
             <div class="table-shell">
                 <table>
@@ -82,22 +149,24 @@
                             <th>Fog node</th>
                             <th>City</th>
                             <th>Readings</th>
+                            <th>Risk events</th>
                             <th>Window</th>
                         </tr>
                     </thead>
                     <tbody id="recent-runs-body">
                         {% for run in recent_runs %}
                         <tr>
-                            <td>{{ run.run_id }}</td>
+                            <td><a href="{% url 'run-detail' run.run_id %}">{{ run.run_id }}</a></td>
                             <td>{{ run.athlete_name }}</td>
                             <td>{{ run.fog_node_id }}</td>
                             <td>{{ run.city }}</td>
                             <td>{{ run.reading_count }}</td>
+                            <td>{{ run.risk_events }}</td>
                             <td>{{ run.started_at|date:"H:i:s" }} - {{ run.latest_at|date:"H:i:s" }}</td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="6">No runs ingested yet.</td>
+                            <td colspan="7">No runs ingested yet.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -106,16 +175,43 @@
         </section>
     </main>
 
+    {{ selected_filters|json_script:"initial-filters" }}
+    {{ filter_options|json_script:"initial-filter-options" }}
+    {{ cards|json_script:"initial-cards" }}
+    {{ recent_runs|json_script:"initial-runs" }}
+    {{ trends|json_script:"initial-trends" }}
+    {{ risk_explanations|json_script:"initial-risks" }}
+
     <script>
         const summaryUrl = "{% url 'summary-api' %}";
         const manualTriggerUrl = "{% url 'manual-trigger' %}";
+        const exportUrl = "{% url 'export-readings' %}";
         const pollIntervalMs = {{ frontend_poll_seconds }} * 1000;
         const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+        const initialFilters = JSON.parse(document.getElementById("initial-filters").textContent);
+        const initialFilterOptions = JSON.parse(document.getElementById("initial-filter-options").textContent);
+        const initialCards = JSON.parse(document.getElementById("initial-cards").textContent);
+        const initialRuns = JSON.parse(document.getElementById("initial-runs").textContent);
+        const initialTrends = JSON.parse(document.getElementById("initial-trends").textContent);
+        const initialRisks = JSON.parse(document.getElementById("initial-risks").textContent);
+
         const triggerButton = document.getElementById("manual-trigger-button");
         const triggerStatus = document.getElementById("trigger-status");
         const refreshStatus = document.getElementById("refresh-status");
         const cardsGrid = document.getElementById("cards-grid");
         const recentRunsBody = document.getElementById("recent-runs-body");
+        const trendGrid = document.getElementById("trend-grid");
+        const riskList = document.getElementById("risk-list");
+        const filtersForm = document.getElementById("filters-form");
+        const exportJsonLink = document.getElementById("export-json-link");
+        const exportCsvLink = document.getElementById("export-csv-link");
+
+        const filterElements = {
+            athlete_name: document.getElementById("filter-athlete"),
+            run_id: document.getElementById("filter-run"),
+            sensor_type: document.getElementById("filter-sensor"),
+            time_range: document.getElementById("filter-time-range"),
+        };
 
         function formatTimestamp(timestamp) {
             if (!timestamp) {
@@ -146,13 +242,66 @@
             return `${formatter.format(new Date(startedAt))} - ${formatter.format(new Date(latestAt))}`;
         }
 
+        function applyFiltersToForm(filters) {
+            Object.entries(filterElements).forEach(([key, element]) => {
+                element.value = filters[key] || (key === "time_range" ? "all" : "");
+            });
+        }
+
+        function currentFilters() {
+            return {
+                athlete_name: filterElements.athlete_name.value,
+                run_id: filterElements.run_id.value,
+                sensor_type: filterElements.sensor_type.value,
+                time_range: filterElements.time_range.value || "all",
+            };
+        }
+
+        function buildQueryString(filters, extra = {}) {
+            const params = new URLSearchParams();
+            Object.entries({ ...filters, ...extra }).forEach(([key, value]) => {
+                if (value) {
+                    params.set(key, value);
+                }
+            });
+            return params.toString();
+        }
+
+        function syncSelectOptions(selectElement, items, selectedValue, valueKey = "value", labelKey = "label", defaultLabel = "") {
+            const existing = selectElement.value;
+            const targetValue = selectedValue || existing || "";
+            const options = [];
+            if (defaultLabel) {
+                options.push(`<option value="">${defaultLabel}</option>`);
+            }
+            items.forEach((item) => {
+                const value = typeof item === "string" ? item : item[valueKey];
+                const label = typeof item === "string" ? item : item[labelKey];
+                const selected = value === targetValue ? "selected" : "";
+                options.push(`<option value="${value}" ${selected}>${label}</option>`);
+            });
+            selectElement.innerHTML = options.join("");
+        }
+
+        function updateFilterOptions(filterOptions, selectedFilters) {
+            syncSelectOptions(filterElements.athlete_name, filterOptions.athletes || [], selectedFilters.athlete_name, "value", "label", "All athletes");
+            syncSelectOptions(filterElements.run_id, filterOptions.runs || [], selectedFilters.run_id, "run_id", "label", "All runs");
+            syncSelectOptions(filterElements.sensor_type, filterOptions.sensor_types || [], selectedFilters.sensor_type, "value", "label", "All sensors");
+            syncSelectOptions(filterElements.time_range, filterOptions.time_ranges || [], selectedFilters.time_range, "value", "label");
+        }
+
+        function updateExportLinks(filters) {
+            exportJsonLink.href = `${exportUrl}?${buildQueryString(filters, { format: "json" })}`;
+            exportCsvLink.href = `${exportUrl}?${buildQueryString(filters, { format: "csv" })}`;
+        }
+
         function renderCards(cards) {
             if (!cards.length) {
                 cardsGrid.innerHTML = `
                     <article class="card empty-card">
-                        <p class="card-label">No data yet</p>
-                        <h2>Waiting for telemetry</h2>
-                        <p>The dashboard will refresh automatically when new data arrives.</p>
+                        <p class="card-label">No readings match</p>
+                        <h2>Try broader filters</h2>
+                        <p>Widen the time range or clear a sensor filter to bring back trend data.</p>
                     </article>
                 `;
                 return;
@@ -169,37 +318,114 @@
             `).join("");
         }
 
+        function buildLineChartSvg(points, color) {
+            if (!points.length) {
+                return "";
+            }
+
+            const width = 320;
+            const height = 140;
+            const padding = 16;
+            const values = points.map((point) => point.value);
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const span = max - min || 1;
+            const xStep = points.length === 1 ? 0 : (width - padding * 2) / (points.length - 1);
+            const path = points.map((point, index) => {
+                const x = padding + (xStep * index);
+                const y = height - padding - (((point.value - min) / span) * (height - padding * 2));
+                return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+            }).join(" ");
+
+            return `
+                <svg viewBox="0 0 ${width} ${height}" class="trend-svg" role="img" aria-label="Sensor trend chart">
+                    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="trend-axis"></line>
+                    <path d="${path}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+            `;
+        }
+
+        function renderTrendCharts(trends) {
+            if (!trends.length) {
+                trendGrid.innerHTML = '<article class="empty-block">No trend data for the selected filters.</article>';
+                return;
+            }
+
+            trendGrid.innerHTML = trends.map((trend) => {
+                const latestPoint = trend.points[trend.points.length - 1];
+                const earliestPoint = trend.points[0];
+                return `
+                    <article class="trend-card">
+                        <div class="trend-header">
+                            <div>
+                                <p class="card-label">${trend.label}</p>
+                                <strong>${latestPoint.value} ${trend.unit}</strong>
+                            </div>
+                            <span class="trend-range">${formatTimestamp(earliestPoint.timestamp)} to ${formatTimestamp(latestPoint.timestamp)}</span>
+                        </div>
+                        ${buildLineChartSvg(trend.points, trend.color)}
+                    </article>
+                `;
+            }).join("");
+        }
+
+        function renderRiskExplanations(items) {
+            if (!items.length) {
+                riskList.innerHTML = '<article class="empty-block">No risk events match the current filters.</article>';
+                return;
+            }
+
+            riskList.innerHTML = items.map((item) => `
+                <article class="risk-card">
+                    <p class="card-label">${item.sensor_label} risk</p>
+                    <h3>${item.athlete_name} · <a href="/runs/${item.run_id}/">${item.run_id}</a></h3>
+                    <p>${item.explanation}</p>
+                    <p class="risk-meta">${item.reading_value} ${item.unit} at ${formatTimestamp(item.recorded_at)}</p>
+                </article>
+            `).join("");
+        }
+
         function renderRuns(runs) {
             if (!runs.length) {
-                recentRunsBody.innerHTML = '<tr><td colspan="6">No runs ingested yet.</td></tr>';
+                recentRunsBody.innerHTML = '<tr><td colspan="7">No runs match the current filters.</td></tr>';
                 return;
             }
 
             recentRunsBody.innerHTML = runs.map((run) => `
                 <tr>
-                    <td>${run.run_id}</td>
+                    <td><a href="/runs/${run.run_id}/">${run.run_id}</a></td>
                     <td>${run.athlete_name}</td>
                     <td>${run.fog_node_id}</td>
                     <td>${run.city}</td>
                     <td>${run.reading_count}</td>
+                    <td>${run.risk_events}</td>
                     <td>${formatTimeWindow(run.started_at, run.latest_at)}</td>
                 </tr>
             `).join("");
         }
 
-        async function refreshSummary() {
-            const response = await fetch(summaryUrl, { headers: { "Accept": "application/json" } });
-            if (!response.ok) {
-                throw new Error("Unable to refresh dashboard summary.");
-            }
-
-            const data = await response.json();
+        function renderSummary(data) {
             document.getElementById("metric-total-readings").textContent = data.total_readings;
             document.getElementById("metric-active-runs").textContent = data.active_runs;
             document.getElementById("metric-risk-events").textContent = data.risk_events;
             renderCards(data.cards || []);
             renderRuns(data.recent_runs || []);
+            renderTrendCharts(data.trends || []);
+            renderRiskExplanations(data.risk_explanations || []);
+            updateFilterOptions(data.filter_options || initialFilterOptions, data.selected_filters || currentFilters());
+            updateExportLinks(data.selected_filters || currentFilters());
             refreshStatus.textContent = `Dashboard refreshed at ${formatTimestamp(new Date().toISOString())}. Auto-refresh every {{ frontend_poll_seconds }}s.`;
+        }
+
+        async function refreshSummary(filters = currentFilters()) {
+            const response = await fetch(`${summaryUrl}?${buildQueryString(filters)}`, {
+                headers: { "Accept": "application/json" },
+            });
+            if (!response.ok) {
+                throw new Error("Unable to refresh dashboard summary.");
+            }
+            const data = await response.json();
+            renderSummary(data);
         }
 
         async function triggerIngestion() {
@@ -238,15 +464,41 @@
             }
         }
 
+        filtersForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            try {
+                await refreshSummary(currentFilters());
+            } catch (error) {
+                refreshStatus.textContent = error.message;
+            }
+        });
+
+        document.getElementById("reset-filters-button").addEventListener("click", async () => {
+            applyFiltersToForm({ athlete_name: "", run_id: "", sensor_type: "", time_range: "all" });
+            try {
+                await refreshSummary(currentFilters());
+            } catch (error) {
+                refreshStatus.textContent = error.message;
+            }
+        });
+
         triggerButton.addEventListener("click", triggerIngestion);
 
-        refreshSummary().catch(() => {
+        applyFiltersToForm(initialFilters);
+        updateFilterOptions(initialFilterOptions, initialFilters);
+        updateExportLinks(initialFilters);
+        renderCards(initialCards);
+        renderRuns(initialRuns);
+        renderTrendCharts(initialTrends);
+        renderRiskExplanations(initialRisks);
+
+        refreshSummary(initialFilters).catch(() => {
             refreshStatus.textContent = "Initial dashboard refresh failed. Retrying automatically.";
         });
 
         window.setInterval(async () => {
             try {
-                await refreshSummary();
+                await refreshSummary(currentFilters());
             } catch (error) {
                 refreshStatus.textContent = "Waiting for the next successful dashboard refresh.";
             }

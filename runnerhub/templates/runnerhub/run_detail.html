@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ detail.run_id }} · RunFog Dublin</title>
+    <link rel="stylesheet" href="/static/runnerhub/dashboard.css">
+</head>
+<body>
+    <main class="page-shell">
+        <section class="hero detail-hero">
+            <div>
+                <p class="eyebrow">Run Detail</p>
+                <h1>{{ detail.run_id }}</h1>
+                <p class="hero-copy">
+                    {{ detail.athlete_name }} in {{ detail.city }} via {{ detail.fog_node_id }}.
+                    Queue mode: {{ queue_backend }}.
+                </p>
+                <div class="hero-actions">
+                    <a class="secondary-link" href="/">Back to dashboard</a>
+                    <a class="secondary-link" href="/api/export/?format=json&run_id={{ detail.run_id }}">Export JSON</a>
+                    <a class="secondary-link" href="/api/export/?format=csv&run_id={{ detail.run_id }}">Export CSV</a>
+                </div>
+            </div>
+            <div class="hero-panel">
+                <div class="metric">
+                    <span>Readings</span>
+                    <strong>{{ detail.reading_count }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Risk events</span>
+                    <strong>{{ detail.risk_events }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Started</span>
+                    <strong>{{ detail.started_at|date:"H:i:s" }}</strong>
+                </div>
+                <div class="metric">
+                    <span>Latest</span>
+                    <strong>{{ detail.latest_at|date:"H:i:s" }}</strong>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid">
+            {% for card in detail.cards %}
+            <article class="card">
+                <p class="card-label">{{ card.label }}</p>
+                <h2>{{ card.latest_value }} {{ card.unit }}</h2>
+                <p>Average: {{ card.average_value }} {{ card.unit }}</p>
+                <p>Risk flags: {{ card.risk_events }}</p>
+                <p>Last update: {{ card.latest_timestamp|date:"d M Y H:i:s" }}</p>
+            </article>
+            {% endfor %}
+        </section>
+
+        <section class="analytics-grid">
+            <section class="panel">
+                <div class="section-header">
+                    <h2>Run Trends</h2>
+                    <p>Recent sensor values from this run.</p>
+                </div>
+                <div id="detail-trend-grid" class="trend-grid"></div>
+            </section>
+            <section class="panel">
+                <div class="section-header">
+                    <h2>Risk Breakdown</h2>
+                    <p>Why specific readings were flagged.</p>
+                </div>
+                <div id="detail-risk-list" class="risk-list"></div>
+            </section>
+        </section>
+
+        <section class="panel">
+            <div class="section-header">
+                <h2>Latest Readings</h2>
+                <p>Most recent telemetry samples for this run.</p>
+            </div>
+            <div class="table-shell">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Sensor</th>
+                            <th>Value</th>
+                            <th>Quality</th>
+                            <th>Risk</th>
+                            <th>Recorded</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for reading in detail.readings %}
+                        <tr>
+                            <td>{{ reading.sensor_label }}</td>
+                            <td>{{ reading.reading_value }} {{ reading.unit }}</td>
+                            <td>{{ reading.quality_score }}</td>
+                            <td>{% if reading.risk_flag %}{{ reading.risk_explanation }}{% else %}Normal{% endif %}</td>
+                            <td>{{ reading.recorded_at|date:"d M Y H:i:s" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    {{ detail.trends|json_script:"detail-trends" }}
+    {{ detail.risk_explanations|json_script:"detail-risks" }}
+
+    <script>
+        const trends = JSON.parse(document.getElementById("detail-trends").textContent);
+        const risks = JSON.parse(document.getElementById("detail-risks").textContent);
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) {
+                return "n/a";
+            }
+            const date = new Date(timestamp);
+            return new Intl.DateTimeFormat("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            }).format(date);
+        }
+
+        function buildLineChartSvg(points, color) {
+            if (!points.length) {
+                return "";
+            }
+
+            const width = 320;
+            const height = 140;
+            const padding = 16;
+            const values = points.map((point) => point.value);
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const span = max - min || 1;
+            const xStep = points.length === 1 ? 0 : (width - padding * 2) / (points.length - 1);
+            const path = points.map((point, index) => {
+                const x = padding + (xStep * index);
+                const y = height - padding - (((point.value - min) / span) * (height - padding * 2));
+                return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+            }).join(" ");
+
+            return `
+                <svg viewBox="0 0 ${width} ${height}" class="trend-svg" role="img" aria-label="Run trend chart">
+                    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="trend-axis"></line>
+                    <path d="${path}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+            `;
+        }
+
+        function renderTrends(items) {
+            const target = document.getElementById("detail-trend-grid");
+            if (!items.length) {
+                target.innerHTML = '<article class="empty-block">No trend data available.</article>';
+                return;
+            }
+
+            target.innerHTML = items.map((trend) => {
+                const latestPoint = trend.points[trend.points.length - 1];
+                const earliestPoint = trend.points[0];
+                return `
+                    <article class="trend-card">
+                        <div class="trend-header">
+                            <div>
+                                <p class="card-label">${trend.label}</p>
+                                <strong>${latestPoint.value} ${trend.unit}</strong>
+                            </div>
+                            <span class="trend-range">${formatTimestamp(earliestPoint.timestamp)} to ${formatTimestamp(latestPoint.timestamp)}</span>
+                        </div>
+                        ${buildLineChartSvg(trend.points, trend.color)}
+                    </article>
+                `;
+            }).join("");
+        }
+
+        function renderRisks(items) {
+            const target = document.getElementById("detail-risk-list");
+            if (!items.length) {
+                target.innerHTML = '<article class="empty-block">No risk events in this run.</article>';
+                return;
+            }
+
+            target.innerHTML = items.map((item) => `
+                <article class="risk-card">
+                    <p class="card-label">${item.sensor_label}</p>
+                    <h3>${item.reading_value} ${item.unit}</h3>
+                    <p>${item.explanation}</p>
+                    <p class="risk-meta">${formatTimestamp(item.recorded_at)}</p>
+                </article>
+            `).join("");
+        }
+
+        renderTrends(trends);
+        renderRisks(risks);
+    </script>
+</body>
+</html>

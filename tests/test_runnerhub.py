@@ -79,6 +79,7 @@ class IngestionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "RunFog Dublin")
         self.assertContains(response, "Test Runner")
+        self.assertContains(response, "Filters")
 
     def test_manual_trigger_creates_data(self):
         response = self.client.post("/api/manual-trigger/")
@@ -122,3 +123,73 @@ class IngestionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["trigger_mode"], "lambda")
         self.assertEqual(response.json()["readings_sent"], 20)
+
+    def test_summary_api_supports_filters(self):
+        self.client.post(
+            "/api/ingest/",
+            data=json.dumps(self.payload),
+            content_type="application/json",
+            **self._auth_headers(),
+        )
+        second_payload = {
+            **self.payload,
+            "run_id": "run-def456",
+            "athlete_name": "Second Runner",
+            "readings": [
+                {
+                    "sensor_type": "cadence",
+                    "reading_value": 150.0,
+                    "unit": "spm",
+                    "recorded_at": timezone.now().isoformat(),
+                    "quality_score": 0.93,
+                    "risk_flag": True,
+                }
+            ],
+        }
+        self.client.post(
+            "/api/ingest/",
+            data=json.dumps(second_payload),
+            content_type="application/json",
+            **self._auth_headers(),
+        )
+
+        response = self.client.get("/api/summary/?athlete_name=Second+Runner&sensor_type=cadence")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total_readings"], 1)
+        self.assertEqual(data["active_runs"], 1)
+        self.assertEqual(data["cards"][0]["key"], "cadence")
+
+    def test_export_json_and_csv(self):
+        self.client.post(
+            "/api/ingest/",
+            data=json.dumps(self.payload),
+            content_type="application/json",
+            **self._auth_headers(),
+        )
+
+        json_response = self.client.get("/api/export/?format=json&run_id=run-abc123")
+        self.assertEqual(json_response.status_code, 200)
+        self.assertEqual(json_response.json()["count"], 2)
+
+        csv_response = self.client.get("/api/export/?format=csv&run_id=run-abc123")
+        self.assertEqual(csv_response.status_code, 200)
+        self.assertIn("text/csv", csv_response["Content-Type"])
+        self.assertIn("run-abc123", csv_response.content.decode("utf-8"))
+
+    def test_run_detail_page_and_api(self):
+        self.client.post(
+            "/api/ingest/",
+            data=json.dumps(self.payload),
+            content_type="application/json",
+            **self._auth_headers(),
+        )
+
+        page_response = self.client.get("/runs/run-abc123/")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertContains(page_response, "Latest Readings")
+
+        api_response = self.client.get("/api/runs/run-abc123/")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["run_id"], "run-abc123")

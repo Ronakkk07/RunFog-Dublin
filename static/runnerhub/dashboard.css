@@ -1,10 +1,12 @@
 :root {
     --bg: #eef3ef;
-    --panel: #fefcf7;
+    --panel: rgba(254, 252, 247, 0.85);
+    --panel-strong: #fefcf7;
     --text: #132018;
     --muted: #526258;
     --accent: #1d6b53;
     --accent-dark: #0e3e31;
+    --accent-soft: rgba(29, 107, 83, 0.12);
     --border: rgba(19, 32, 24, 0.08);
     --shadow: 0 18px 50px rgba(15, 42, 31, 0.08);
 }
@@ -22,8 +24,12 @@ body {
         linear-gradient(180deg, #f3f6ef 0%, #edf4f2 55%, #e5ece7 100%);
 }
 
+a {
+    color: var(--accent-dark);
+}
+
 .page-shell {
-    max-width: 1200px;
+    max-width: 1280px;
     margin: 0 auto;
     padding: 32px 20px 64px;
 }
@@ -33,6 +39,10 @@ body {
     grid-template-columns: 1.6fr 1fr;
     gap: 24px;
     align-items: stretch;
+}
+
+.detail-hero {
+    margin-bottom: 12px;
 }
 
 .eyebrow {
@@ -48,6 +58,12 @@ h1 {
     margin: 0 0 16px;
 }
 
+h2,
+h3,
+p {
+    margin-top: 0;
+}
+
 .hero-copy {
     max-width: 60ch;
     font-size: 1.05rem;
@@ -55,15 +71,25 @@ h1 {
 }
 
 .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    align-items: center;
     margin-top: 24px;
 }
 
-.action-button {
-    border: 0;
+.action-button,
+.ghost-button,
+.secondary-link {
     border-radius: 999px;
     padding: 12px 20px;
     font: inherit;
     font-weight: 700;
+    text-decoration: none;
+}
+
+.action-button {
+    border: 0;
     color: #f6fbf8;
     background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
     cursor: pointer;
@@ -75,21 +101,28 @@ h1 {
     opacity: 0.75;
 }
 
-.action-status {
-    margin: 12px 0 0;
-    color: var(--muted);
+.ghost-button,
+.secondary-link {
+    border: 1px solid var(--border);
+    color: var(--accent-dark);
+    background: var(--panel-strong);
 }
 
+.action-status,
 .refresh-status {
-    margin: 6px 0 0;
+    width: 100%;
+    margin: 0;
     color: var(--muted);
-    font-size: 0.95rem;
 }
 
 .hero-panel,
 .card,
-.table-shell {
-    background: rgba(254, 252, 247, 0.82);
+.table-shell,
+.panel,
+.trend-card,
+.risk-card,
+.empty-block {
+    background: var(--panel);
     backdrop-filter: blur(12px);
     border: 1px solid var(--border);
     border-radius: 24px;
@@ -122,6 +155,59 @@ h1 {
     font-size: 1.8rem;
 }
 
+.panel {
+    padding: 22px;
+    margin-top: 28px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.section-header p,
+.card p,
+.risk-meta,
+.trend-range {
+    color: var(--muted);
+}
+
+.filters-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    align-items: end;
+}
+
+.filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.95rem;
+}
+
+.filter-field span {
+    color: var(--muted);
+}
+
+.filter-field select {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-strong);
+}
+
+.filters-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
 .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -129,21 +215,74 @@ h1 {
     margin-top: 28px;
 }
 
-.runs {
+.empty-card,
+.empty-block {
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 22px;
+}
+
+.analytics-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 20px;
     margin-top: 28px;
 }
 
-.section-header h2 {
-    margin-bottom: 6px;
+.trend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
 }
 
-.section-header p,
-.card p {
-    color: var(--muted);
+.trend-card,
+.risk-card {
+    padding: 18px;
 }
 
-.empty-card {
-    min-height: 180px;
+.trend-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: start;
+    margin-bottom: 12px;
+}
+
+.trend-header strong {
+    display: block;
+    font-size: 1.4rem;
+}
+
+.trend-range {
+    max-width: 140px;
+    text-align: right;
+    font-size: 0.85rem;
+}
+
+.trend-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.trend-axis {
+    stroke: rgba(19, 32, 24, 0.15);
+    stroke-width: 1;
+}
+
+.risk-list {
+    display: grid;
+    gap: 14px;
+}
+
+.risk-card h3 {
+    margin-bottom: 8px;
+}
+
+.runs {
+    margin-top: 28px;
 }
 
 .table-shell {
@@ -160,6 +299,7 @@ td {
     padding: 14px 16px;
     text-align: left;
     border-bottom: 1px solid var(--border);
+    vertical-align: top;
 }
 
 th {
@@ -169,23 +309,41 @@ th {
     color: var(--muted);
 }
 
-@media (max-width: 800px) {
-    .hero {
+@media (max-width: 1024px) {
+    .hero,
+    .analytics-grid {
         grid-template-columns: 1fr;
     }
 
+    .filters-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 800px) {
     .hero-panel {
         grid-template-columns: 1fr 1fr;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: start;
     }
 }
 
 @media (max-width: 540px) {
-    .hero-panel {
+    .hero-panel,
+    .filters-grid {
         grid-template-columns: 1fr;
     }
 
     .page-shell {
         padding-left: 14px;
         padding-right: 14px;
+    }
+
+    .hero-actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 }
