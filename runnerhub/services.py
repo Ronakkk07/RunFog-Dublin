@@ -90,10 +90,24 @@ def _invoke_ingestor_lambda():
             raise RuntimeError(payload or "Lambda invocation failed")
 
         result = json.loads(payload or "{}")
+        if isinstance(result.get("body"), str):
+            try:
+                nested_body = json.loads(result["body"])
+            except json.JSONDecodeError:
+                nested_body = {}
+            else:
+                result = {**result, **nested_body}
+
+        if result.get("statusCode") not in (None, 200):
+            raise RuntimeError(f"Ingestion Lambda returned statusCode={result.get('statusCode')}: {payload}")
+
+        if "readings_sent" not in result:
+            raise RuntimeError(f"Unexpected ingestion Lambda response: {payload}")
+
         return {
             "trigger_mode": "lambda",
             "run_id": result.get("run_id", run_id),
-            "readings_sent": result.get("readings_sent", 0),
+            "readings_sent": result["readings_sent"],
             "mode": result.get("mode", "queued"),
         }
     except (BotoCoreError, ClientError) as exc:
