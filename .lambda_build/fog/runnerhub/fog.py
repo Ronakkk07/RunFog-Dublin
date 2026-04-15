@@ -15,18 +15,6 @@ DEFAULT_SENSOR_FREQUENCIES = {
 
 DEFAULT_BASE_LAT = 53.3498
 DEFAULT_BASE_LNG = -6.2603
-ATHLETE_NAMES = [
-    "Aoife Murphy",
-    "Ciaran Kelly",
-    "Niamh Doyle",
-    "Conor Walsh",
-    "Saoirse Byrne",
-    "Eoin Brennan",
-    "Clodagh Ryan",
-    "Darragh O'Shea",
-    "Aisling Nolan",
-    "Finn O'Connor",
-]
 
 
 def env_frequencies():
@@ -60,7 +48,6 @@ def build_fog_payload(
     start_time=None,
 ):
     run_id = run_id or f"run-{uuid4().hex[:8]}"
-    athlete_name = resolve_athlete_name(athlete_name)
     start_time = start_time or datetime.now(timezone.utc)
     sensor_cycle = build_sensor_cycle(frequencies or DEFAULT_SENSOR_FREQUENCIES)
     readings = []
@@ -78,12 +65,6 @@ def build_fog_payload(
         "batch_id": batch_id or f"{run_id}-batch-1",
         "readings": readings,
     }
-
-
-def resolve_athlete_name(athlete_name=None):
-    if athlete_name and athlete_name.strip():
-        return athlete_name.strip()
-    return random.choice(ATHLETE_NAMES)
 
 
 def generate_reading(sensor_type, recorded_at, base_lat, base_lng, progress):

@@ -9,7 +9,7 @@ Environment variables:
   RUNNERHUB_SQS_QUEUE_URL      - target SQS queue URL
   FOG_READINGS_PER_BATCH       - default 20
   FOG_NODE_ID                  - default fog-lambda-cloud
-  FOG_ATHLETE_NAME             - optional fixed athlete name; random when omitted
+  FOG_ATHLETE_NAME             - default Ciaran Kelly
   FOG_CITY                     - default Dublin
   FREQ_HEART_RATE              - default 1.0
   FREQ_CADENCE                 - default 1.0
@@ -37,7 +37,7 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 SQS_QUEUE_URL = os.environ["RUNNERHUB_SQS_QUEUE_URL"]
 READINGS_PER_BATCH = int(os.environ.get("FOG_READINGS_PER_BATCH", "20"))
 FOG_NODE_ID = os.environ.get("FOG_NODE_ID", "fog-lambda-cloud")
-ATHLETE_NAME = os.environ.get("FOG_ATHLETE_NAME", "").strip()
+ATHLETE_NAME = os.environ.get("FOG_ATHLETE_NAME", "Ciaran Kelly")
 CITY = os.environ.get("FOG_CITY", "Dublin")
 
 sqs = boto3.client("sqs", region_name=AWS_REGION)

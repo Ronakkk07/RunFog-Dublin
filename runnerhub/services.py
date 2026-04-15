@@ -42,7 +42,7 @@ def trigger_ingestion():
 
     payload = build_fog_payload(
         fog_node_id="fog-manual-local",
-        athlete_name="Manual Trigger Runner",
+        athlete_name=None,
         city="Dublin",
         readings_per_batch=20,
         run_id=f"run-manual-{uuid4().hex[:8]}",

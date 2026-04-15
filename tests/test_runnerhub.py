@@ -87,6 +87,7 @@ class IngestionTests(TestCase):
         self.assertEqual(response.json()["trigger_mode"], "local")
         self.assertGreater(response.json()["readings_sent"], 0)
         self.assertGreater(SensorReading.objects.count(), 0)
+        self.assertTrue(SensorReading.objects.latest("id").athlete_name)
 
     @override_settings(RUNNERHUB_MANUAL_TRIGGER_MODE="broken")
     def test_manual_trigger_returns_json_error_for_invalid_mode(self):

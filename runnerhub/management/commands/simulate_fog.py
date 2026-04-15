@@ -20,7 +20,7 @@ class Command(BaseCommand):
             help="Full URL of the backend ingest endpoint.",
         )
         parser.add_argument("--fog-node-id", default="fog-dublin-local")
-        parser.add_argument("--athlete-name", default="Aoife Murphy")
+        parser.add_argument("--athlete-name", default="")
         parser.add_argument("--city", default="Dublin")
         parser.add_argument("--batches", type=int, default=5)
         parser.add_argument("--readings-per-batch", type=int, default=15)
@@ -39,6 +39,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         run_id = f"run-{uuid4().hex[:8]}"
         now = timezone.now()
+        athlete_name = options["athlete_name"]
 
         self.stdout.write(f"Starting fog simulation: {run_id}")
         self.stdout.write(f"Target backend: {options['backend_url']}")
@@ -48,7 +49,7 @@ class Command(BaseCommand):
             payload = build_fog_payload(
                 fog_node_id=options["fog_node_id"],
                 run_id=run_id,
-                athlete_name=options["athlete_name"],
+                athlete_name=athlete_name,
                 city=options["city"],
                 batch_id=f"{run_id}-batch-{batch_index + 1}",
                 readings_per_batch=options["readings_per_batch"],
