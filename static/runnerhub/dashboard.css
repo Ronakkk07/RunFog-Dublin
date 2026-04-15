@@ -182,6 +182,10 @@ p {
     align-items: end;
 }
 
+.filters-grid-wide {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .filter-field {
     display: flex;
     flex-direction: column;
@@ -237,8 +241,15 @@ p {
     gap: 16px;
 }
 
+.fog-node-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+}
+
 .trend-card,
-.risk-card {
+.risk-card,
+.fog-node-card {
     padding: 18px;
 }
 
@@ -281,6 +292,10 @@ p {
     margin-bottom: 8px;
 }
 
+.fog-node-card h3 {
+    margin-bottom: 10px;
+}
+
 .runs {
     margin-top: 28px;
 }
@@ -318,6 +333,10 @@ th {
     .filters-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .filters-grid-wide {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 800px) {
@@ -334,6 +353,10 @@ th {
 @media (max-width: 540px) {
     .hero-panel,
     .filters-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .filters-grid-wide {
         grid-template-columns: 1fr;
     }
 

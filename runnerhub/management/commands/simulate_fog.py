@@ -19,9 +19,9 @@ class Command(BaseCommand):
             default=os.getenv("RUNNERHUB_BACKEND_URL", "http://127.0.0.1:8000/api/ingest/"),
             help="Full URL of the backend ingest endpoint.",
         )
-        parser.add_argument("--fog-node-id", default="fog-dublin-local")
+        parser.add_argument("--fog-node-id", default="")
         parser.add_argument("--athlete-name", default="")
-        parser.add_argument("--city", default="Dublin")
+        parser.add_argument("--city", default="")
         parser.add_argument("--batches", type=int, default=5)
         parser.add_argument("--readings-per-batch", type=int, default=15)
         parser.add_argument("--dispatch-delay", type=float, default=1.0)

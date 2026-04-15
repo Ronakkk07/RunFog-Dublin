@@ -32,6 +32,10 @@
                     <strong>{{ detail.risk_events }}</strong>
                 </div>
                 <div class="metric">
+                    <span>Fog anomalies</span>
+                    <strong>{{ detail.anomaly_count }}</strong>
+                </div>
+                <div class="metric">
                     <span>Started</span>
                     <strong>{{ detail.started_at|date:"H:i:s" }}</strong>
                 </div>
@@ -64,8 +68,8 @@
             </section>
             <section class="panel">
                 <div class="section-header">
-                    <h2>Risk Breakdown</h2>
-                    <p>Why specific readings were flagged.</p>
+                    <h2>Fog-side Anomalies</h2>
+                    <p>Anomalies raised by the fog node before cloud persistence.</p>
                 </div>
                 <div id="detail-risk-list" class="risk-list"></div>
             </section>
@@ -83,6 +87,7 @@
                             <th>Sensor</th>
                             <th>Value</th>
                             <th>Quality</th>
+                            <th>Fog anomaly</th>
                             <th>Risk</th>
                             <th>Recorded</th>
                         </tr>
@@ -93,6 +98,7 @@
                             <td>{{ reading.sensor_label }}</td>
                             <td>{{ reading.reading_value }} {{ reading.unit }}</td>
                             <td>{{ reading.quality_score }}</td>
+                            <td>{% if reading.anomaly_type %}{{ reading.anomaly_message }}{% else %}Normal{% endif %}</td>
                             <td>{% if reading.risk_flag %}{{ reading.risk_explanation }}{% else %}Normal{% endif %}</td>
                             <td>{{ reading.recorded_at|date:"d M Y H:i:s" }}</td>
                         </tr>
@@ -104,7 +110,7 @@
     </main>
 
     {{ detail.trends|json_script:"detail-trends" }}
-    {{ detail.risk_explanations|json_script:"detail-risks" }}
+    {{ detail.fog_anomalies|json_script:"detail-risks" }}
 
     <script>
         const trends = JSON.parse(document.getElementById("detail-trends").textContent);
@@ -181,15 +187,15 @@
         function renderRisks(items) {
             const target = document.getElementById("detail-risk-list");
             if (!items.length) {
-                target.innerHTML = '<article class="empty-block">No risk events in this run.</article>';
+                target.innerHTML = '<article class="empty-block">No fog-side anomalies in this run.</article>';
                 return;
             }
 
             target.innerHTML = items.map((item) => `
                 <article class="risk-card">
-                    <p class="card-label">${item.sensor_label}</p>
-                    <h3>${item.reading_value} ${item.unit}</h3>
-                    <p>${item.explanation}</p>
+                    <p class="card-label">${item.anomaly_severity} anomaly · ${item.sensor_label}</p>
+                    <h3>${item.fog_node_id} · ${item.reading_value} ${item.unit}</h3>
+                    <p>${item.message}</p>
                     <p class="risk-meta">${formatTimestamp(item.recorded_at)}</p>
                 </article>
             `).join("");

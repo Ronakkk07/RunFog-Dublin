@@ -122,6 +122,10 @@ def export_readings(request):
                 "longitude",
                 "quality_score",
                 "risk_flag",
+                "anomaly_type",
+                "anomaly_severity",
+                "anomaly_message",
+                "processing_stage",
                 "risk_explanation",
                 "recorded_at",
             ],
@@ -146,6 +150,7 @@ def manual_trigger(request):
 def read_request_filters(request):
     return {
         "athlete_name": request.GET.get("athlete_name", ""),
+        "fog_node_id": request.GET.get("fog_node_id", ""),
         "run_id": request.GET.get("run_id", ""),
         "sensor_type": request.GET.get("sensor_type", ""),
         "time_range": request.GET.get("time_range", "all"),

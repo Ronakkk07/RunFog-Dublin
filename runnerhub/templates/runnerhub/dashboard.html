@@ -14,8 +14,8 @@
                 <p class="eyebrow">Fog + Edge Runner Intelligence</p>
                 <h1>RunFog Dublin</h1>
                 <p class="hero-copy">
-                    Filter live runner telemetry, explain flagged risk events, inspect trends by sensor,
-                    and export the exact subset you are analysing.
+                    Compare virtual fog nodes, inspect fog-detected anomalies, track trends by sensor,
+                    and export the exact telemetry slice you are analysing.
                 </p>
                 <div class="hero-actions">
                     <button id="manual-trigger-button" class="action-button" type="button">
@@ -45,6 +45,10 @@
                     <strong id="metric-risk-events">{{ risk_events }}</strong>
                 </div>
                 <div class="metric">
+                    <span>Fog anomalies</span>
+                    <strong id="metric-anomaly-events">{{ anomaly_events }}</strong>
+                </div>
+                <div class="metric">
                     <span>Queue mode</span>
                     <strong>{{ queue_backend }}</strong>
                 </div>
@@ -54,15 +58,24 @@
         <section class="filters-panel panel">
             <div class="section-header">
                 <h2>Filters</h2>
-                <p>Slice the dashboard by athlete, run, sensor, or time window.</p>
+                <p>Slice the dashboard by athlete, fog node, run, sensor, or time window.</p>
             </div>
-            <form id="filters-form" class="filters-grid">
+            <form id="filters-form" class="filters-grid filters-grid-wide">
                 <label class="filter-field">
                     <span>Athlete</span>
                     <select id="filter-athlete" name="athlete_name">
                         <option value="">All athletes</option>
                         {% for athlete in filter_options.athletes %}
                         <option value="{{ athlete }}" {% if selected_filters.athlete_name == athlete %}selected{% endif %}>{{ athlete }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="filter-field">
+                    <span>Fog node</span>
+                    <select id="filter-fog-node" name="fog_node_id">
+                        <option value="">All fog nodes</option>
+                        {% for fog_node in filter_options.fog_nodes %}
+                        <option value="{{ fog_node }}" {% if selected_filters.fog_node_id == fog_node %}selected{% endif %}>{{ fog_node }}</option>
                         {% endfor %}
                     </select>
                 </label>
@@ -99,6 +112,14 @@
             </form>
         </section>
 
+        <section class="panel">
+            <div class="section-header">
+                <h2>Fog Node Activity</h2>
+                <p>How each virtual fog node is contributing runs, readings, and anomaly detections.</p>
+            </div>
+            <div id="fog-node-grid" class="fog-node-grid"></div>
+        </section>
+
         <section id="cards-grid" class="grid">
             {% for card in cards %}
             <article class="card">
@@ -128,10 +149,10 @@
 
             <section class="panel">
                 <div class="section-header">
-                    <h2>Risk Explanations</h2>
-                    <p>Human-readable reasons for the latest flagged readings.</p>
+                    <h2>Fog-side Anomalies</h2>
+                    <p>Edge detections raised before the batch reaches the cloud backend.</p>
                 </div>
-                <div id="risk-list" class="risk-list"></div>
+                <div id="anomaly-list" class="risk-list"></div>
             </section>
         </section>
 
@@ -177,10 +198,11 @@
 
     {{ selected_filters|json_script:"initial-filters" }}
     {{ filter_options|json_script:"initial-filter-options" }}
+    {{ fog_nodes|json_script:"initial-fog-nodes" }}
     {{ cards|json_script:"initial-cards" }}
     {{ recent_runs|json_script:"initial-runs" }}
     {{ trends|json_script:"initial-trends" }}
-    {{ risk_explanations|json_script:"initial-risks" }}
+    {{ fog_anomalies|json_script:"initial-fog-anomalies" }}
 
     <script>
         const summaryUrl = "{% url 'summary-api' %}";
@@ -190,24 +212,27 @@
         const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         const initialFilters = JSON.parse(document.getElementById("initial-filters").textContent);
         const initialFilterOptions = JSON.parse(document.getElementById("initial-filter-options").textContent);
+        const initialFogNodes = JSON.parse(document.getElementById("initial-fog-nodes").textContent);
         const initialCards = JSON.parse(document.getElementById("initial-cards").textContent);
         const initialRuns = JSON.parse(document.getElementById("initial-runs").textContent);
         const initialTrends = JSON.parse(document.getElementById("initial-trends").textContent);
-        const initialRisks = JSON.parse(document.getElementById("initial-risks").textContent);
+        const initialFogAnomalies = JSON.parse(document.getElementById("initial-fog-anomalies").textContent);
 
         const triggerButton = document.getElementById("manual-trigger-button");
         const triggerStatus = document.getElementById("trigger-status");
         const refreshStatus = document.getElementById("refresh-status");
         const cardsGrid = document.getElementById("cards-grid");
+        const fogNodeGrid = document.getElementById("fog-node-grid");
         const recentRunsBody = document.getElementById("recent-runs-body");
         const trendGrid = document.getElementById("trend-grid");
-        const riskList = document.getElementById("risk-list");
+        const anomalyList = document.getElementById("anomaly-list");
         const filtersForm = document.getElementById("filters-form");
         const exportJsonLink = document.getElementById("export-json-link");
         const exportCsvLink = document.getElementById("export-csv-link");
 
         const filterElements = {
             athlete_name: document.getElementById("filter-athlete"),
+            fog_node_id: document.getElementById("filter-fog-node"),
             run_id: document.getElementById("filter-run"),
             sensor_type: document.getElementById("filter-sensor"),
             time_range: document.getElementById("filter-time-range"),
@@ -251,6 +276,7 @@
         function currentFilters() {
             return {
                 athlete_name: filterElements.athlete_name.value,
+                fog_node_id: filterElements.fog_node_id.value,
                 run_id: filterElements.run_id.value,
                 sensor_type: filterElements.sensor_type.value,
                 time_range: filterElements.time_range.value || "all",
@@ -285,6 +311,7 @@
 
         function updateFilterOptions(filterOptions, selectedFilters) {
             syncSelectOptions(filterElements.athlete_name, filterOptions.athletes || [], selectedFilters.athlete_name, "value", "label", "All athletes");
+            syncSelectOptions(filterElements.fog_node_id, filterOptions.fog_nodes || [], selectedFilters.fog_node_id, "value", "label", "All fog nodes");
             syncSelectOptions(filterElements.run_id, filterOptions.runs || [], selectedFilters.run_id, "run_id", "label", "All runs");
             syncSelectOptions(filterElements.sensor_type, filterOptions.sensor_types || [], selectedFilters.sensor_type, "value", "label", "All sensors");
             syncSelectOptions(filterElements.time_range, filterOptions.time_ranges || [], selectedFilters.time_range, "value", "label");
@@ -301,7 +328,7 @@
                     <article class="card empty-card">
                         <p class="card-label">No readings match</p>
                         <h2>Try broader filters</h2>
-                        <p>Widen the time range or clear a sensor filter to bring back trend data.</p>
+                        <p>Widen the time range or clear a fog-node filter to bring back telemetry.</p>
                     </article>
                 `;
                 return;
@@ -314,6 +341,25 @@
                     <p>Average: ${card.average_value} ${card.unit}</p>
                     <p>Risk flags: ${card.risk_events}</p>
                     <p>Last update: ${formatTimestamp(card.latest_timestamp)}</p>
+                </article>
+            `).join("");
+        }
+
+        function renderFogNodes(items) {
+            if (!items.length) {
+                fogNodeGrid.innerHTML = '<article class="empty-block">No fog-node activity matches the current filters.</article>';
+                return;
+            }
+
+            fogNodeGrid.innerHTML = items.map((item) => `
+                <article class="fog-node-card">
+                    <p class="card-label">${item.city}</p>
+                    <h3>${item.fog_node_id}</h3>
+                    <p>Runs handled: ${item.run_count}</p>
+                    <p>Readings dispatched: ${item.reading_count}</p>
+                    <p>Fog anomalies: ${item.anomaly_events}</p>
+                    <p>Risk flags: ${item.risk_events}</p>
+                    <p>Last seen: ${formatTimestamp(item.last_seen)}</p>
                 </article>
             `).join("");
         }
@@ -369,18 +415,18 @@
             }).join("");
         }
 
-        function renderRiskExplanations(items) {
+        function renderFogAnomalies(items) {
             if (!items.length) {
-                riskList.innerHTML = '<article class="empty-block">No risk events match the current filters.</article>';
+                anomalyList.innerHTML = '<article class="empty-block">No fog-side anomalies match the current filters.</article>';
                 return;
             }
 
-            riskList.innerHTML = items.map((item) => `
+            anomalyList.innerHTML = items.map((item) => `
                 <article class="risk-card">
-                    <p class="card-label">${item.sensor_label} risk</p>
-                    <h3>${item.athlete_name} · <a href="/runs/${item.run_id}/">${item.run_id}</a></h3>
-                    <p>${item.explanation}</p>
-                    <p class="risk-meta">${item.reading_value} ${item.unit} at ${formatTimestamp(item.recorded_at)}</p>
+                    <p class="card-label">${item.anomaly_severity} anomaly · ${item.sensor_label}</p>
+                    <h3>${item.fog_node_id} · <a href="/runs/${item.run_id}/">${item.run_id}</a></h3>
+                    <p>${item.message}</p>
+                    <p class="risk-meta">${item.athlete_name} · ${item.reading_value} ${item.unit} · ${formatTimestamp(item.recorded_at)}</p>
                 </article>
             `).join("");
         }
@@ -408,10 +454,12 @@
             document.getElementById("metric-total-readings").textContent = data.total_readings;
             document.getElementById("metric-active-runs").textContent = data.active_runs;
             document.getElementById("metric-risk-events").textContent = data.risk_events;
+            document.getElementById("metric-anomaly-events").textContent = data.anomaly_events || 0;
+            renderFogNodes(data.fog_nodes || []);
             renderCards(data.cards || []);
             renderRuns(data.recent_runs || []);
             renderTrendCharts(data.trends || []);
-            renderRiskExplanations(data.risk_explanations || []);
+            renderFogAnomalies(data.fog_anomalies || []);
             updateFilterOptions(data.filter_options || initialFilterOptions, data.selected_filters || currentFilters());
             updateExportLinks(data.selected_filters || currentFilters());
             refreshStatus.textContent = `Dashboard refreshed at ${formatTimestamp(new Date().toISOString())}. Auto-refresh every {{ frontend_poll_seconds }}s.`;
@@ -474,7 +522,7 @@
         });
 
         document.getElementById("reset-filters-button").addEventListener("click", async () => {
-            applyFiltersToForm({ athlete_name: "", run_id: "", sensor_type: "", time_range: "all" });
+            applyFiltersToForm({ athlete_name: "", fog_node_id: "", run_id: "", sensor_type: "", time_range: "all" });
             try {
                 await refreshSummary(currentFilters());
             } catch (error) {
@@ -487,10 +535,11 @@
         applyFiltersToForm(initialFilters);
         updateFilterOptions(initialFilterOptions, initialFilters);
         updateExportLinks(initialFilters);
+        renderFogNodes(initialFogNodes);
         renderCards(initialCards);
         renderRuns(initialRuns);
         renderTrendCharts(initialTrends);
-        renderRiskExplanations(initialRisks);
+        renderFogAnomalies(initialFogAnomalies);
 
         refreshSummary(initialFilters).catch(() => {
             refreshStatus.textContent = "Initial dashboard refresh failed. Retrying automatically.";

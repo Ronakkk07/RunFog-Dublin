@@ -6,6 +6,7 @@ from django.conf import settings
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
+from runnerhub.fog import available_fog_nodes
 from runnerhub.models import SensorReading
 
 
@@ -23,11 +24,15 @@ class IngestionTests(TestCase):
             "readings": [
                 {
                     "sensor_type": "heart_rate",
-                    "reading_value": 152.4,
+                    "reading_value": 182.4,
                     "unit": "bpm",
                     "recorded_at": timestamp,
                     "quality_score": 0.98,
-                    "risk_flag": False,
+                    "risk_flag": True,
+                    "anomaly_type": "high_heart_rate_spike",
+                    "anomaly_severity": "critical",
+                    "anomaly_message": "Fog node detected a sudden heart-rate spike.",
+                    "processing_stage": "fog",
                 },
                 {
                     "sensor_type": "gps",
@@ -57,6 +62,10 @@ class IngestionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["mode"], "inline")
         self.assertEqual(SensorReading.objects.count(), 2)
+        self.assertEqual(
+            SensorReading.objects.get(sensor_type="heart_rate", run_id="run-abc123").anomaly_type,
+            "high_heart_rate_spike",
+        )
 
     def test_ingest_rejects_missing_token(self):
         """Endpoint must return 401 when no token is provided."""
@@ -89,6 +98,7 @@ class IngestionTests(TestCase):
         self.assertGreater(response.json()["readings_sent"], 0)
         self.assertGreater(SensorReading.objects.count(), 0)
         self.assertTrue(SensorReading.objects.latest("id").athlete_name)
+        self.assertIn(SensorReading.objects.latest("id").fog_node_id, available_fog_nodes())
 
     @override_settings(RUNNERHUB_MANUAL_TRIGGER_MODE="broken")
     def test_manual_trigger_returns_json_error_for_invalid_mode(self):
@@ -133,6 +143,7 @@ class IngestionTests(TestCase):
         )
         second_payload = {
             **self.payload,
+            "fog_node_id": "fog-campus-west",
             "run_id": "run-def456",
             "athlete_name": "Second Runner",
             "readings": [
@@ -153,13 +164,30 @@ class IngestionTests(TestCase):
             **self._auth_headers(),
         )
 
-        response = self.client.get("/api/summary/?athlete_name=Second+Runner&sensor_type=cadence")
+        response = self.client.get("/api/summary/?athlete_name=Second+Runner&sensor_type=cadence&fog_node_id=fog-campus-west")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["total_readings"], 1)
         self.assertEqual(data["active_runs"], 1)
         self.assertEqual(data["cards"][0]["key"], "cadence")
+        self.assertEqual(data["fog_nodes"][0]["fog_node_id"], "fog-campus-west")
+
+    def test_summary_api_returns_anomaly_and_fog_node_breakdown(self):
+        self.client.post(
+            "/api/ingest/",
+            data=json.dumps(self.payload),
+            content_type="application/json",
+            **self._auth_headers(),
+        )
+
+        response = self.client.get("/api/summary/")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["anomaly_events"], 1)
+        self.assertEqual(data["fog_nodes"][0]["fog_node_id"], "fog-dublin-01")
+        self.assertEqual(data["fog_anomalies"][0]["anomaly_type"], "high_heart_rate_spike")
 
     def test_export_json_and_csv(self):
         self.client.post(
@@ -193,3 +221,4 @@ class IngestionTests(TestCase):
         api_response = self.client.get("/api/runs/run-abc123/")
         self.assertEqual(api_response.status_code, 200)
         self.assertEqual(api_response.json()["run_id"], "run-abc123")
+        self.assertEqual(api_response.json()["anomaly_count"], 1)

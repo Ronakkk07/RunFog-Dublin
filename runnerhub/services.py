@@ -5,6 +5,7 @@ from statistics import mean
 from uuid import uuid4
 
 from django.conf import settings
+from django.db.models import Count, Max, Q
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -60,7 +61,7 @@ def trigger_ingestion():
         raise RuntimeError("RUNNERHUB_MANUAL_TRIGGER_MODE must be 'local' or 'lambda'")
 
     payload = build_fog_payload(
-        fog_node_id="fog-manual-local",
+        fog_node_id=None,
         athlete_name=None,
         city="Dublin",
         readings_per_batch=20,
@@ -160,6 +161,10 @@ def persist_batch(batch_payload):
                 longitude=reading.get("longitude"),
                 quality_score=reading.get("quality_score", 0),
                 risk_flag=reading.get("risk_flag", False),
+                anomaly_type=reading.get("anomaly_type", ""),
+                anomaly_severity=reading.get("anomaly_severity", ""),
+                anomaly_message=reading.get("anomaly_message", ""),
+                processing_stage=reading.get("processing_stage", ""),
                 recorded_at=recorded_at,
             )
         )
@@ -182,6 +187,7 @@ def normalize_filters(filters=None):
 
     return {
         "athlete_name": (filters.get("athlete_name") or "").strip(),
+        "fog_node_id": (filters.get("fog_node_id") or "").strip(),
         "run_id": (filters.get("run_id") or "").strip(),
         "sensor_type": sensor_type,
         "time_range": time_range,
@@ -194,6 +200,8 @@ def get_filtered_queryset(filters=None):
 
     if filters["athlete_name"]:
         queryset = queryset.filter(athlete_name=filters["athlete_name"])
+    if filters["fog_node_id"]:
+        queryset = queryset.filter(fog_node_id=filters["fog_node_id"])
     if filters["run_id"]:
         queryset = queryset.filter(run_id=filters["run_id"])
     if filters["sensor_type"]:
@@ -217,10 +225,13 @@ def build_dashboard_summary(filters=None):
         "total_readings": queryset.count(),
         "active_runs": queryset.values("run_id").distinct().count(),
         "risk_events": queryset.filter(risk_flag=True).count(),
+        "anomaly_events": queryset.exclude(anomaly_type="").count(),
         "cards": build_metric_cards(readings),
+        "fog_nodes": build_fog_node_breakdown(queryset),
         "recent_runs": build_recent_runs(readings),
         "trends": build_trend_series(readings),
         "risk_explanations": build_risk_explanations(readings),
+        "fog_anomalies": build_fog_anomalies(readings),
         "has_filters": any(filters.values()),
     }
 
@@ -240,11 +251,13 @@ def build_run_detail(run_id):
         "fog_node_id": latest.fog_node_id,
         "reading_count": len(readings),
         "risk_events": sum(1 for reading in readings if reading.risk_flag),
+        "anomaly_count": sum(1 for reading in readings if reading.anomaly_type),
         "started_at": oldest.recorded_at,
         "latest_at": latest.recorded_at,
         "cards": build_metric_cards(readings),
         "trends": build_trend_series(readings, max_points=20),
         "risk_explanations": build_risk_explanations(readings),
+        "fog_anomalies": build_fog_anomalies(readings),
         "readings": [
             serialize_reading(reading)
             for reading in readings[:80]
@@ -272,6 +285,11 @@ def build_filter_options():
         .values_list("athlete_name", flat=True)
         .distinct()
     )
+    fog_nodes = list(
+        SensorReading.objects.order_by("fog_node_id")
+        .values_list("fog_node_id", flat=True)
+        .distinct()
+    )
     run_choices = []
     seen_runs = set()
     for reading in SensorReading.objects.order_by("-recorded_at")[:200]:
@@ -290,6 +308,7 @@ def build_filter_options():
 
     return {
         "athletes": athletes,
+        "fog_nodes": fog_nodes,
         "runs": run_choices,
         "sensor_types": sensor_types,
         "time_ranges": [
@@ -349,6 +368,32 @@ def build_recent_runs(readings):
     return recent_runs
 
 
+def build_fog_node_breakdown(queryset):
+    rows = (
+        queryset.values("fog_node_id", "city")
+        .annotate(
+            reading_count=Count("id"),
+            run_count=Count("run_id", distinct=True),
+            risk_events=Count("id", filter=Q(risk_flag=True)),
+            anomaly_events=Count("id", filter=~Q(anomaly_type="")),
+            last_seen=Max("recorded_at"),
+        )
+        .order_by("-reading_count", "fog_node_id")
+    )
+    return [
+        {
+            "fog_node_id": row["fog_node_id"],
+            "city": row["city"],
+            "reading_count": row["reading_count"],
+            "run_count": row["run_count"],
+            "risk_events": row["risk_events"],
+            "anomaly_events": row["anomaly_events"],
+            "last_seen": serialize_timestamp(row["last_seen"]),
+        }
+        for row in rows
+    ]
+
+
 def build_trend_series(readings, max_points=12):
     sensor_types = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
     grouped = defaultdict(list)
@@ -386,18 +431,44 @@ def build_risk_explanations(readings):
         {
             "run_id": reading.run_id,
             "athlete_name": reading.athlete_name,
+            "fog_node_id": reading.fog_node_id,
             "sensor_type": reading.sensor_type,
             "sensor_label": sensor_labels.get(reading.sensor_type, reading.sensor_type),
             "reading_value": round(reading.reading_value, 2),
             "unit": reading.unit,
             "recorded_at": serialize_timestamp(reading.recorded_at),
+            "anomaly_type": reading.anomaly_type,
+            "anomaly_severity": reading.anomaly_severity,
             "explanation": risk_explanation(reading),
         }
         for reading in risk_readings
     ]
 
 
+def build_fog_anomalies(readings):
+    sensor_labels = {choice[0]: choice[1] for choice in SensorReading.SENSOR_TYPES}
+    anomaly_readings = [reading for reading in readings if reading.anomaly_type][:12]
+    return [
+        {
+            "run_id": reading.run_id,
+            "athlete_name": reading.athlete_name,
+            "fog_node_id": reading.fog_node_id,
+            "sensor_type": reading.sensor_type,
+            "sensor_label": sensor_labels.get(reading.sensor_type, reading.sensor_type),
+            "anomaly_type": reading.anomaly_type,
+            "anomaly_severity": reading.anomaly_severity or "medium",
+            "message": reading.anomaly_message,
+            "recorded_at": serialize_timestamp(reading.recorded_at),
+            "reading_value": round(reading.reading_value, 2),
+            "unit": reading.unit,
+        }
+        for reading in anomaly_readings
+    ]
+
+
 def risk_explanation(reading):
+    if reading.anomaly_message:
+        return reading.anomaly_message
     if reading.sensor_type == "heart_rate":
         return f"Heart rate rose above the 170 bpm alert threshold at {round(reading.reading_value, 1)} bpm."
     if reading.sensor_type == "cadence":
@@ -423,6 +494,10 @@ def serialize_reading(reading):
         "longitude": reading.longitude,
         "quality_score": round(reading.quality_score, 2),
         "risk_flag": reading.risk_flag,
+        "anomaly_type": reading.anomaly_type,
+        "anomaly_severity": reading.anomaly_severity,
+        "anomaly_message": reading.anomaly_message,
+        "processing_stage": reading.processing_stage,
         "risk_explanation": risk_explanation(reading) if reading.risk_flag else "",
         "recorded_at": serialize_timestamp(reading.recorded_at),
     }

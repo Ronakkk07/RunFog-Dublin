@@ -21,6 +21,10 @@ class SensorReading(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     quality_score = models.FloatField(default=0)
     risk_flag = models.BooleanField(default=False)
+    anomaly_type = models.CharField(max_length=64, blank=True, default="")
+    anomaly_severity = models.CharField(max_length=32, blank=True, default="")
+    anomaly_message = models.CharField(max_length=255, blank=True, default="")
+    processing_stage = models.CharField(max_length=32, blank=True, default="")
     recorded_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 
