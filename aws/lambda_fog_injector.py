@@ -1,21 +1,16 @@
 """
-Lambda fog injector for RunFog Dublin.
-
-Recommended trigger:
-  EventBridge schedule -> this function -> SQS -> lambda_consumer -> Django
-
-Environment variables:
-  AWS_REGION                   - default us-east-1
-  RUNNERHUB_SQS_QUEUE_URL      - target SQS queue URL
-  FOG_READINGS_PER_BATCH       - default 20
-  FOG_NODE_ID                  - optional fixed fog node; random virtual node when omitted
-  FOG_ATHLETE_NAME             - optional fixed athlete name; random when omitted
-  FOG_CITY                     - default Dublin
-  FREQ_HEART_RATE              - default 1.0
-  FREQ_CADENCE                 - default 1.0
-  FREQ_PACE                    - default 0.7
-  FREQ_GPS                     - default 0.5
-  FREQ_AIR_QUALITY             - default 0.4
+    Environment variables:
+    AWS_REGION                   - default us-east-1
+    RUNNERHUB_SQS_QUEUE_URL      - target SQS queue URL
+    FOG_READINGS_PER_BATCH       - default 20
+    FOG_NODE_ID                  - optional fixed fog node; random virtual node when omitted
+    FOG_ATHLETE_NAME             - optional fixed athlete name; random when omitted
+    FOG_CITY                     - default Dublin
+    FREQ_HEART_RATE              - default 1.0
+    FREQ_CADENCE                 - default 1.0
+    FREQ_PACE                    - default 0.7
+    FREQ_GPS                     - default 0.5
+    FREQ_AIR_QUALITY             - default 0.4
 """
 
 import json
